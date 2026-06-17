@@ -14,6 +14,10 @@ export function listPicFiles(): string[] {
   return readdirSync(repoPath('PIC'));
 }
 
+export function readPic(name: string): Buffer {
+  return readFileSync(repoPath('PIC', name));
+}
+
 export function listSndFiles(): string[] {
   return readdirSync(repoPath('SND'));
 }
