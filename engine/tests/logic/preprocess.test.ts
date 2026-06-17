@@ -121,6 +121,25 @@ describe('preprocess: comments and macros on synthetic source', () => {
     );
     expect(result.messages[1]).toBe('line one line two, "quoted".');
   });
+
+  it('discards a disabled "#message" and its multi-line quoted body (RM25.MSG-style)', () => {
+    const result = preprocessSource(
+      '%message 1 "kept"\n' +
+        '#message 2\n' +
+        '"this whole multi-line string\n' +
+        ' must not leak into the code stream"\n' +
+        'set( near.mud);\n',
+      SRC
+    );
+    expect(result.messages).toEqual({ 1: 'kept' });
+    expect(result.source.trim()).toBe('set( near.mud);');
+  });
+
+  it('discards a disabled "#message" whose quoted body is on the same line (RM96.CG-style)', () => {
+    const result = preprocessSource('#message 1 "increment"\n' + 'set( near.mud);\n', SRC);
+    expect(result.messages).toEqual({});
+    expect(result.source.trim()).toBe('set( near.mud);');
+  });
 });
 
 describe('preprocess: negative cases', () => {

@@ -17,12 +17,20 @@ const KEYWORDS = new Set(['if', 'else', 'goto', 'return']);
 const PUNCTUATION = new Set(['(', ')', '{', '}', ',', ';', ':']);
 
 const TWO_CHAR_OPERATORS = new Set(['==', '!=', '&&', '||']);
-const ONE_CHAR_OPERATORS = new Set(['<', '>', '!', '=', '+', '-', '*', '/']);
+// "@" isn't a real AGI operator - it's a typo for "=" that shows up twice in
+// the source (RM99.CG's "debug.1 =@ debug.0", RM100.CG's "work @= 0"), but
+// the lexer just needs to tokenize it; the parser decides what "@=" / "=@"
+// mean. "/" is deliberately not an operator here: the language has no
+// division syntax, and VIEWS.H's "v.ego.sleeping.l/r" view name relies on
+// "/" being part of an identifier rather than splitting it in two.
+const ONE_CHAR_OPERATORS = new Set(['<', '>', '!', '=', '+', '-', '*', '@']);
 
 // AGI identifiers are dot-namespaced (current.status, lgc.error), and a few
-// use "'" (PO'd.wiz.init'd) or "$" (dirty$word) as word-grouping markers.
+// use "'" (PO'd.wiz.init'd) or "$" (dirty$word) as word-grouping markers, a
+// trailing "?" (RM2.CG's ":where.are.we?" label, never actually goto'd), or
+// "/" (VIEWS.H's "v.ego.sleeping.l/r").
 const IDENTIFIER_START = /[A-Za-z_]/;
-const IDENTIFIER_CHAR = /[A-Za-z0-9_.'$]/;
+const IDENTIFIER_CHAR = /[A-Za-z0-9_.'$?/]/;
 const DIGIT = /[0-9]/;
 
 export function tokenize(source: string): Token[] {
