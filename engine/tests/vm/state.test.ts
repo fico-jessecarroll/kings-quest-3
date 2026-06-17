@@ -197,3 +197,109 @@ describe('VmState string registers', () => {
     expect(() => state.setString(-1, 'x')).toThrow(RangeError);
   });
 });
+
+describe('VmState picture buffers', () => {
+  it('starts with no picture loaded, no buffers, and not visible', () => {
+    const state = new VmState();
+    expect(state.getLoadedPictureNumber()).toBeNull();
+    expect(state.getPictureBuffers()).toBeNull();
+    expect(state.isPictureVisible()).toBe(false);
+  });
+
+  it('tracks the loaded picture number independently of the drawn buffers', () => {
+    const state = new VmState();
+    state.setLoadedPictureNumber(12);
+    expect(state.getLoadedPictureNumber()).toBe(12);
+    state.setLoadedPictureNumber(null);
+    expect(state.getLoadedPictureNumber()).toBeNull();
+  });
+
+  it('stores the visual+priority buffers drawn for the room', () => {
+    const state = new VmState();
+    const visual = new Uint8Array([1, 2, 3]);
+    const priority = new Uint8Array([4, 5, 6]);
+    state.setPictureBuffers({ visual, priority });
+    expect(state.getPictureBuffers()).toEqual({ visual, priority });
+  });
+
+  it('toggles picture visibility independently of the buffers', () => {
+    const state = new VmState();
+    state.setPictureVisible(true);
+    expect(state.isPictureVisible()).toBe(true);
+    state.setPictureVisible(false);
+    expect(state.isPictureVisible()).toBe(false);
+  });
+});
+
+describe('VmState object positions', () => {
+  it('defaults an untouched object to (0, 0)', () => {
+    const state = new VmState();
+    expect(state.getPosition(5)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('sets and reads back a position', () => {
+    const state = new VmState();
+    state.setPosition(5, 38, 158);
+    expect(state.getPosition(5)).toEqual({ x: 38, y: 158 });
+  });
+
+  it('throws on out-of-range object numbers or coordinates', () => {
+    const state = new VmState();
+    expect(() => state.getPosition(-1)).toThrow(RangeError);
+    expect(() => state.setPosition(5, -1, 0)).toThrow(RangeError);
+    expect(() => state.setPosition(5, 0, 256)).toThrow(RangeError);
+  });
+});
+
+describe('VmState object priorities', () => {
+  it('defaults an untouched object to automatic priority', () => {
+    const state = new VmState();
+    expect(state.getPriority(5)).toBeNull();
+  });
+
+  it('sets a fixed priority, then releases it back to automatic', () => {
+    const state = new VmState();
+    state.setPriority(5, 12);
+    expect(state.getPriority(5)).toBe(12);
+    state.releasePriority(5);
+    expect(state.getPriority(5)).toBeNull();
+  });
+
+  it('throws on an out-of-range priority value', () => {
+    const state = new VmState();
+    expect(() => state.setPriority(5, 256)).toThrow(RangeError);
+  });
+});
+
+describe('VmState add.to.pic log', () => {
+  it('starts empty', () => {
+    const state = new VmState();
+    expect(state.getAddToPicCalls()).toEqual([]);
+  });
+
+  it('records each add.to.pic call in order', () => {
+    const state = new VmState();
+    const call = { view: 1, loop: 0, cel: 2, x: 10, y: 20, priority: 8, margin: 0 };
+    state.recordAddToPic(call);
+    expect(state.getAddToPicCalls()).toEqual([call]);
+  });
+});
+
+describe('VmState last display event', () => {
+  it('starts with no display event', () => {
+    const state = new VmState();
+    expect(state.getDisplay()).toBeNull();
+  });
+
+  it('records the most recent print/print.at/display event', () => {
+    const state = new VmState();
+    state.setDisplay({ kind: 'print', message: 1 });
+    expect(state.getDisplay()).toEqual({ kind: 'print', message: 1 });
+
+    state.setDisplay({ kind: 'print.at', message: 16, row: 2, col: 2, width: 37 });
+    expect(state.getDisplay()).toEqual({ kind: 'print.at', message: 16, row: 2, col: 2, width: 37 });
+
+    state.setDisplay({ kind: 'display', message: 30, row: 0, col: 20 });
+    expect(state.getDisplay()).toEqual({ kind: 'display', message: 30, row: 0, col: 20 });
+  });
+});

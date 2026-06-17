@@ -44,6 +44,26 @@ export const DYNAMIC_LOCAL_RANGE = { first: 240, last: 255 } as const;
 
 export type EgoControlMode = 'player' | 'program';
 
+export interface PictureBuffers {
+  visual: Uint8Array;
+  priority: Uint8Array;
+}
+
+export interface AddToPicCall {
+  view: number;
+  loop: number;
+  cel: number;
+  x: number;
+  y: number;
+  priority: number;
+  margin: number;
+}
+
+export type DisplayEvent =
+  | { kind: 'print'; message: number }
+  | { kind: 'print.at'; message: number; row: number; col: number; width: number }
+  | { kind: 'display'; message: number; row: number; col: number };
+
 function assertIndex(index: number, count: number, label: string): void {
   if (!Number.isInteger(index) || index < 0 || index >= count) {
     throw new RangeError(`${label} index out of range: ${index} (expected 0-${count - 1})`);
@@ -72,6 +92,14 @@ export class VmState {
   private soundEnabled = true;
   private inputEnabled = true;
   private egoControlMode: EgoControlMode = 'player';
+
+  private loadedPictureNumber: number | null = null;
+  private pictureBuffers: PictureBuffers | null = null;
+  private pictureVisible = false;
+  private readonly positions = new Map<number, { x: number; y: number }>();
+  private readonly priorities = new Map<number, number>();
+  private readonly addToPicCalls: AddToPicCall[] = [];
+  private display: DisplayEvent | null = null;
 
   getFlag(index: number): boolean {
     assertIndex(index, FLAG_COUNT, 'flag');
@@ -182,5 +210,78 @@ export class VmState {
   setString(index: number, value: string): void {
     assertIndex(index, STRING_REGISTER_COUNT, 'string register');
     this.strings[index] = value;
+  }
+
+  /** Picture resource number passed to `load.pic`/`discard.pic`, independent of what's actually drawn. */
+  getLoadedPictureNumber(): number | null {
+    return this.loadedPictureNumber;
+  }
+
+  setLoadedPictureNumber(picture: number | null): void {
+    this.loadedPictureNumber = picture;
+  }
+
+  /** The decoded visual+priority buffers most recently drawn by `draw.pic`. */
+  getPictureBuffers(): PictureBuffers | null {
+    return this.pictureBuffers;
+  }
+
+  setPictureBuffers(buffers: PictureBuffers): void {
+    this.pictureBuffers = buffers;
+  }
+
+  isPictureVisible(): boolean {
+    return this.pictureVisible;
+  }
+
+  setPictureVisible(visible: boolean): void {
+    this.pictureVisible = visible;
+  }
+
+  /** Screen position of an object/ego; untouched objects default to (0, 0). */
+  getPosition(objectNumber: number): { x: number; y: number } {
+    assertIndex(objectNumber, VAR_COUNT, 'object');
+    return this.positions.get(objectNumber) ?? { x: 0, y: 0 };
+  }
+
+  setPosition(objectNumber: number, x: number, y: number): void {
+    assertIndex(objectNumber, VAR_COUNT, 'object');
+    assertByteValue(x, 'x');
+    assertByteValue(y, 'y');
+    this.positions.set(objectNumber, { x, y });
+  }
+
+  /** An object's fixed priority band, or null if it's using AGI's automatic (y-based) priority. */
+  getPriority(objectNumber: number): number | null {
+    assertIndex(objectNumber, VAR_COUNT, 'object');
+    return this.priorities.get(objectNumber) ?? null;
+  }
+
+  setPriority(objectNumber: number, priority: number): void {
+    assertIndex(objectNumber, VAR_COUNT, 'object');
+    assertByteValue(priority, 'priority');
+    this.priorities.set(objectNumber, priority);
+  }
+
+  releasePriority(objectNumber: number): void {
+    assertIndex(objectNumber, VAR_COUNT, 'object');
+    this.priorities.delete(objectNumber);
+  }
+
+  /** Log of `add.to.pic` calls; there's no view decoder yet to actually paint the cel onto the buffers. */
+  getAddToPicCalls(): readonly AddToPicCall[] {
+    return this.addToPicCalls;
+  }
+
+  recordAddToPic(call: AddToPicCall): void {
+    this.addToPicCalls.push(call);
+  }
+
+  getDisplay(): DisplayEvent | null {
+    return this.display;
+  }
+
+  setDisplay(event: DisplayEvent): void {
+    this.display = event;
   }
 }
