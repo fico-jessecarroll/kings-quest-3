@@ -38,6 +38,32 @@ export enum ReservedVar {
   EgoViewResource = 16,
 }
 
+/**
+ * Indices for the flags the AGI interpreter itself sets every tick, per
+ * this game's own SRC/SYSDEFS. `HaveInput` is the one the parser sets when
+ * the player has entered a new command, for room logics to test directly
+ * (e.g. `if (have.input)`).
+ */
+export enum ReservedFlag {
+  OnWater = 0,
+  EgoHidden = 1,
+  HaveInput = 2,
+  HitSpecial = 3,
+  HaveMatch = 4,
+  InitLogs = 5,
+  RestartInProgress = 6,
+  NoScript = 7,
+  EnableDoubleClick = 8,
+  SoundOn = 9,
+  EnableTrace = 10,
+  HasNoiseChannel = 11,
+  RestoreInProgress = 12,
+  EnableObjectSelect = 13,
+  EnableMenu = 14,
+  LeaveWindow = 15,
+  NoPromptRestart = 16,
+}
+
 export const INTERPRETER_RESERVED_RANGE = { first: 0, last: 29 } as const;
 export const ROOM_LOCAL_RANGE = { first: 220, last: 239 } as const;
 export const DYNAMIC_LOCAL_RANGE = { first: 240, last: 255 } as const;
