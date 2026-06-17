@@ -6,6 +6,10 @@ import { decodePic, renderToCanvas } from './resources/pic';
 import { decodeObjectFile } from './resources/object';
 import { decodeWords } from './resources/words';
 import { decodeSound, playSound, type DecodedSound } from './resources/sound';
+import { Interpreter } from './vm/interpreter';
+import { VmState } from './vm/state';
+import { SoundController } from './vm/soundController';
+import type { CallNode, Logic } from './logic/ir';
 
 // AGI resource numbers are a single byte (0-255); probing the whole range
 // over fetch and keeping only the ones that resolve is simpler and more
@@ -160,7 +164,89 @@ async function loadSounds(): Promise<void> {
   setStatus('sound-status', `${resources.length} sounds available.`);
 }
 
+// Flag 41 is SRC/GAMEDEFS.H's `done` - the flag most room logics pass to
+// sound() to learn when playback finished.
+const SOUND_DONE_FLAG = 41;
+
+/**
+ * Exercises the VM `sound`/`load.sound`/`stop.sound` commands end-to-end -
+ * Interpreter -> SoundController -> playSound() -> Web Audio - rather than
+ * calling the decoder/player directly like loadSounds() above. This is the
+ * manual check that room music/effects actually play through the same path
+ * game logic uses, including the sound-enabled toggle and completion flag.
+ */
+async function setupVmSoundDemo(): Promise<void> {
+  const list = document.getElementById('vm-sound-list');
+  const enabledToggle = document.getElementById('vm-sound-enabled') as HTMLInputElement | null;
+  if (!list) return;
+
+  setStatus('vm-sound-status', 'Loading...');
+  const resources = await fetchResourceRange('SND', MAX_RESOURCE_ID);
+  const rawById = new Map(resources.map(({ id, bytes }) => [id, bytes]));
+
+  const state = new VmState();
+  const soundController = new SoundController({
+    state,
+    audioContext: getAudioContext(),
+    soundLoader: (id) => rawById.get(id),
+  });
+  const interpreter = new Interpreter({ state, commands: soundController.commands });
+
+  enabledToggle?.addEventListener('change', () => {
+    state.setSoundEnabled(enabledToggle.checked);
+  });
+
+  function runCommand(name: string, args: CallNode['args']): void {
+    const logic: Logic = { statements: [{ type: 'call', name, args }] };
+    interpreter.loadLogic(900, logic);
+    interpreter.runLogic(900);
+  }
+
+  for (const { id } of resources) {
+    const row = document.createElement('div');
+
+    const playButton = document.createElement('button');
+    playButton.textContent = `sound( ${id}, done )`;
+    const flagLabel = document.createElement('span');
+
+    let pollHandle: ReturnType<typeof setTimeout> | undefined;
+    const renderFlag = (): void => {
+      flagLabel.textContent = ` done: ${state.getFlag(SOUND_DONE_FLAG)}`;
+    };
+    const pollUntilDone = (): void => {
+      renderFlag();
+      if (!state.getFlag(SOUND_DONE_FLAG)) {
+        pollHandle = setTimeout(pollUntilDone, 200);
+      }
+    };
+
+    playButton.addEventListener('click', () => {
+      clearTimeout(pollHandle);
+      state.resetFlag(SOUND_DONE_FLAG);
+      runCommand('load.sound', [{ kind: 'number', value: id }]);
+      runCommand('sound', [
+        { kind: 'number', value: id },
+        { kind: 'number', value: SOUND_DONE_FLAG },
+      ]);
+      pollUntilDone();
+    });
+
+    const stopButton = document.createElement('button');
+    stopButton.textContent = 'stop.sound()';
+    stopButton.addEventListener('click', () => runCommand('stop.sound', []));
+
+    row.append(playButton, stopButton, flagLabel);
+    list.append(row);
+  }
+
+  setStatus(
+    'vm-sound-status',
+    `${resources.length} sounds wired through the VM sound/load.sound/stop.sound commands. Toggle "sound enabled" to confirm the done flag still fires immediately with audio off.`,
+  );
+}
+
 void loadPics();
 void loadObjects();
 void loadWords();
 void loadSounds();
+void setupVmSoundDemo();
