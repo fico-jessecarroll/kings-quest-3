@@ -63,6 +63,19 @@
         flex-wrap: wrap;
         gap: 0.5rem;
       }
+      #vm-sound-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      #vm-sound-list > div {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        background: #2a2a2a;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+      }
       button {
         cursor: pointer;
       }
@@ -106,6 +119,14 @@
       <h2>SOUND playback</h2>
       <p id="sound-status"></p>
       <div id="sound-list"></div>
+    </section>
+
+    <section>
+      <h2>VM sound commands</h2>
+      <p>Drives the same <code>sound</code> / <code>load.sound</code> / <code>stop.sound</code> commands room logic calls, through the real Interpreter and SoundController.</p>
+      <p><label><input type="checkbox" id="vm-sound-enabled" checked /> sound enabled</label></p>
+      <p id="vm-sound-status"></p>
+      <div id="vm-sound-list"></div>
     </section>
 
     <script type="module" src="/src/viewer.ts"></script>
