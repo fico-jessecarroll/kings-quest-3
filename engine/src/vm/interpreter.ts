@@ -45,7 +45,7 @@ type Op =
   | { kind: 'jump'; target: number }
   | { kind: 'return' };
 
-function wrapByte(value: number): number {
+export function wrapByte(value: number): number {
   return ((value % 256) + 256) % 256;
 }
 
