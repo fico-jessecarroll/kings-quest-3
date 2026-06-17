@@ -22,13 +22,15 @@ export function decodeWords(buffer: Buffer | Uint8Array): DecodedWords {
     throw new Error(`WORDS.TOK buffer too short: expected at least ${HEADER_SIZE} header bytes, got ${buffer.length}`);
   }
 
-  const data = buffer instanceof Buffer ? buffer : Buffer.from(buffer);
+  // Uint8Array/DataView only (no Buffer global) so this also runs in browsers.
+  const data = new Uint8Array(buffer);
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const words = new Map<string, number>();
   const groups = new Map<number, string[]>();
 
   let firstOffset = 0;
   for (let letter = 0; letter < 26; letter++) {
-    const offset = data.readUInt16BE(letter * 2);
+    const offset = view.getUint16(letter * 2, false);
     if (offset > 0) {
       firstOffset = offset;
       break;
@@ -60,7 +62,7 @@ export function decodeWords(buffer: Buffer | Uint8Array): DecodedWords {
       break;
     }
 
-    const group = data.readUInt16BE(pos);
+    const group = view.getUint16(pos, false);
     pos += 2;
 
     const word = previousWord.slice(0, prefixLen) + chars;
