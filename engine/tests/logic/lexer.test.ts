@@ -100,6 +100,33 @@ describe('tokenize: representative lines from RM0.CG / RM1.CG', () => {
     ]);
   });
 
+  it('lexes a slash-separated identifier (VIEWS.H: "v.ego.sleeping.l/r")', () => {
+    expect(simplify(tokenize('load.view(v.ego.sleeping.l/r);'))).toEqual([
+      ['identifier', 'load.view'],
+      ['punctuation', '('],
+      ['identifier', 'v.ego.sleeping.l/r'],
+      ['punctuation', ')'],
+      ['punctuation', ';'],
+    ]);
+  });
+
+  it('lexes a label with a trailing "?" (RM2.CG: ":where.are.we?")', () => {
+    expect(simplify(tokenize(':where.are.we?'))).toEqual([
+      ['punctuation', ':'],
+      ['identifier', 'where.are.we?'],
+    ]);
+  });
+
+  it('lexes "@" as its own operator token (RM99.CG/RM100.CG typo\'d assignments)', () => {
+    expect(simplify(tokenize('work @= 0;'))).toEqual([
+      ['identifier', 'work'],
+      ['operator', '@'],
+      ['operator', '='],
+      ['number', '0'],
+      ['punctuation', ';'],
+    ]);
+  });
+
   it('lexes dollar-sign word-group identifiers (RM0.CG: "said( dirty$word, rol)")', () => {
     expect(simplify(tokenize('said( dirty$word, rol)'))).toEqual([
       ['identifier', 'said'],

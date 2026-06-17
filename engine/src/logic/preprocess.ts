@@ -141,12 +141,54 @@ function addSymbol(ctx: Context, name: string, kind: SymbolKind, raw: string): v
   ctx.defineOrder.push(name);
 }
 
+// Consumes a "%message N <quoted string>" directive's number and (possibly
+// multi-line) string body starting at lines[i], storing it into sink if
+// given. Used both for live %message directives and for disabled #message
+// ones (see DISABLED_MESSAGE below) - SYSDEFS-style sources comment out a
+// message by swapping its leading "%" for "#", but the quoted text on the
+// following line(s) is left behind verbatim and must still be consumed
+// (just discarded) so it doesn't leak into the code stream as bogus
+// statements.
+function consumeMessageBody(
+  rest: string,
+  lines: string[],
+  i: number,
+  line: string,
+  label: string,
+  sink: Record<number, string> | undefined
+): number {
+  const numMatch = /^\s*(\d+)/.exec(rest);
+  if (!numMatch) {
+    throw new PreprocessError(`malformed %message in ${label}: ${line}`);
+  }
+  const num = parseInt(numMatch[1], 10);
+  const afterNumber = rest.slice(numMatch[0].length);
+  const searchLines = [afterNumber, ...lines.slice(i + 1)];
+  const { value, endLine: relEndLine } = readQuotedString(searchLines, 0);
+  if (sink) {
+    sink[num] = value;
+  }
+  return (relEndLine === 0 ? i : i + relEndLine) + 1;
+}
+
+const DISABLED_MESSAGE_LINE = /^\s*#message\b(.*)$/;
+
 function processLines(lines: string[], baseDir: string, ctx: Context, label: string): void {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
     const directiveMatch = DIRECTIVE_LINE.exec(line);
     if (!directiveMatch) {
+      // A disabled "#message N" still has its quoted text sitting on the
+      // line(s) below (unlike other disabled "#"-led declarations, which
+      // are wholly self-contained); that body must be consumed too, or it
+      // leaks into the code stream as a bogus statement.
+      const disabledMessageMatch = DISABLED_MESSAGE_LINE.exec(line);
+      if (disabledMessageMatch) {
+        i = consumeMessageBody(disabledMessageMatch[1], lines, i, line, label, undefined);
+        continue;
+      }
+
       // Strip the DOS EOF marker (0x1A / SUB) some of these legacy files
       // (e.g. RM1.MSG) end with; it carries no meaning and would otherwise
       // leak into the code stream as a bogus statement.
@@ -225,16 +267,7 @@ function processLines(lines: string[], baseDir: string, ctx: Context, label: str
         // Use the raw (un-comment-stripped) suffix of the line here: the
         // quoted string may start right on this same line (e.g.
         // `%message 1 "%m10%w1?"`), or several lines below it.
-        const numMatch = /^\s*(\d+)/.exec(directiveMatch[2]);
-        if (!numMatch) {
-          throw new PreprocessError(`malformed %message in ${label}: ${line}`);
-        }
-        const num = parseInt(numMatch[1], 10);
-        const afterNumber = directiveMatch[2].slice(numMatch[0].length);
-        const searchLines = [afterNumber, ...lines.slice(i + 1)];
-        const { value, endLine: relEndLine } = readQuotedString(searchLines, 0);
-        ctx.messages[num] = value;
-        i = (relEndLine === 0 ? i : i + relEndLine) + 1;
+        i = consumeMessageBody(directiveMatch[2], lines, i, line, label, ctx.messages);
         break;
       }
 

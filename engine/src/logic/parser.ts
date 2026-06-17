@@ -276,8 +276,17 @@ export function parseLogic(source: string): Logic {
       advance();
       expectOperator('=');
       op = '-=';
+    } else if (isOperator('@')) {
+      // RM100.CG's "work @= 0" - a typo'd "=", spelled "@=" instead.
+      advance();
+      expectOperator('=');
+      op = '=';
     } else {
       expectOperator('=');
+      if (isOperator('@')) {
+        // RM99.CG's "debug.1 =@ debug.0" - the same typo, spelled "=@".
+        advance();
+      }
     }
     const value = parseLiteral();
     consumeOptionalSemicolon();
@@ -293,6 +302,10 @@ export function parseLogic(source: string): Logic {
     if (token.type === 'punctuation' && token.value === ':') {
       advance();
       const name = expectIdentifier('after ":"');
+      // RM85.CG's ":takeHisShit;" and RM105.CG's ":pick.a.chore;" both
+      // trail a label with a stray ";", unlike every other label in the
+      // corpus; tolerate it like the other "optional semicolon" statements.
+      consumeOptionalSemicolon();
       return { type: 'label', name: name.value };
     }
 
@@ -329,6 +342,27 @@ export function parseLogic(source: string): Logic {
   function parseStatementsUntil(stop: () => boolean): Statement[] {
     const statements: Statement[] = [];
     while (!atEnd() && !stop()) {
+      // A bare "{" with no preceding "if"/"else" is a stray extra brace with
+      // no matching extra "}" (RM56.CG doubles its if-block's opening brace
+      // but only closes once; RM67.CG has one right after a call statement:
+      // "set(beenIn67){", again closed only once). Skip it as noise rather
+      // than treating it as a nested block, which would consume the "}"
+      // meant for the enclosing block and leave it unterminated.
+      if (isPunct('{')) {
+        advance();
+        continue;
+      }
+
+      // A bare ")" with no preceding unclosed "(" is a stray trailing
+      // typo - the same one repeated three times verbatim: RM36.CG's
+      // "script.timer = msg.delay);", RM48.CG's and RM49.CG's "work = 5);".
+      // Skip it as noise, same reasoning as the stray "{" above. Once it's
+      // skipped, the ";" that trailed it (now orphaned, with no statement
+      // left to terminate) is harmless and also just skipped.
+      if (isPunct(')') || isPunct(';')) {
+        advance();
+        continue;
+      }
       statements.push(parseStatement());
     }
     return statements;

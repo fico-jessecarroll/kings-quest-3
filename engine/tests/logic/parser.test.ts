@@ -311,3 +311,42 @@ describe('parseLogic: real logic files (preprocessed)', () => {
     expect(all.some((s) => s.type === 'label' && s.name === 'exit')).toBe(true);
   });
 });
+
+describe('parseLogic: legacy source quirks', () => {
+  it('tolerates a label trailed by a stray ";" (RM85.CG, RM105.CG)', () => {
+    const logic = parseLogic(':pick.a.chore;\nprint(1);');
+    expect(logic.statements).toEqual([
+      { type: 'label', name: 'pick.a.chore' },
+      { type: 'call', name: 'print', args: [{ kind: 'number', value: 1 }] },
+    ]);
+  });
+
+  it('treats "@=" and "=@" as plain "=" assignment typos (RM99.CG, RM100.CG)', () => {
+    expect(parseLogic('work @= 0;').statements).toEqual([
+      { type: 'assign', target: 'work', op: '=', value: { kind: 'number', value: 0 } },
+    ]);
+    expect(parseLogic('debug.1 =@ debug.0;').statements).toEqual([
+      { type: 'assign', target: 'debug.1', op: '=', value: { kind: 'symbol', name: 'debug.0' } },
+    ]);
+  });
+
+  it('skips a stray extra "{" with no matching extra "}" (RM56.CG, RM67.CG)', () => {
+    const logic = parseLogic('if (flag){\n\t{\n\tprint(1);\n\t}\nprint(2);');
+    expect(logic.statements).toEqual([
+      {
+        type: 'if',
+        test: { type: 'flagTest', name: 'flag' },
+        then: [{ type: 'call', name: 'print', args: [{ kind: 'number', value: 1 }] }],
+      },
+      { type: 'call', name: 'print', args: [{ kind: 'number', value: 2 }] },
+    ]);
+  });
+
+  it('skips a stray trailing ")" and its now-orphaned ";" (RM36.CG, RM48.CG, RM49.CG)', () => {
+    const logic = parseLogic('work = 5);\nprint(1);');
+    expect(logic.statements).toEqual([
+      { type: 'assign', target: 'work', op: '=', value: { kind: 'number', value: 5 } },
+      { type: 'call', name: 'print', args: [{ kind: 'number', value: 1 }] },
+    ]);
+  });
+});
