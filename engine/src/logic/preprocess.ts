@@ -147,8 +147,15 @@ function processLines(lines: string[], baseDir: string, ctx: Context, label: str
     const line = lines[i];
     const directiveMatch = DIRECTIVE_LINE.exec(line);
     if (!directiveMatch) {
-      const codeLine = stripCommentOutsideQuotes(line);
-      if (codeLine.trim() !== '') {
+      // Strip the DOS EOF marker (0x1A / SUB) some of these legacy files
+      // (e.g. RM1.MSG) end with; it carries no meaning and would otherwise
+      // leak into the code stream as a bogus statement.
+      const codeLine = stripCommentOutsideQuotes(line).replace(/\x1a/g, '');
+      const trimmed = codeLine.trim();
+      // SYSDEFS disables some %action/%var/%define declarations by
+      // swapping their leading "%" for "#" rather than removing them
+      // outright; treat a "#"-led line as a comment, like "[".
+      if (trimmed !== '' && !trimmed.startsWith('#')) {
         ctx.codeLines.push(codeLine);
       }
       i++;
