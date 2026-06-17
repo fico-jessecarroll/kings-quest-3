@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KQ3 Asset Viewer</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        background: #1e1e1e;
+        color: #ddd;
+        margin: 0;
+        padding: 1.5rem;
+      }
+      h1 {
+        margin-top: 0;
+      }
+      section {
+        margin-bottom: 2.5rem;
+      }
+      h2 {
+        border-bottom: 1px solid #444;
+        padding-bottom: 0.25rem;
+      }
+      #pic-gallery {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+      }
+      figure {
+        margin: 0;
+        background: #2a2a2a;
+        padding: 0.5rem;
+        border-radius: 4px;
+      }
+      figure canvas {
+        display: block;
+        image-rendering: pixelated;
+      }
+      figcaption {
+        text-align: center;
+        font-size: 0.8rem;
+        margin-top: 0.25rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        max-width: 40rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.25rem 0.75rem;
+        border-bottom: 1px solid #333;
+      }
+      #word-groups {
+        max-height: 24rem;
+        overflow-y: auto;
+        max-width: 50rem;
+      }
+      #sound-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      button {
+        cursor: pointer;
+      }
+      .status {
+        color: #e88;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>KQ3 Asset Viewer</h1>
+    <p>Loads real game assets via <code>fetch</code> and exercises every binary decoder end-to-end.</p>
+
+    <section>
+      <h2>PIC backgrounds</h2>
+      <p id="pic-status"></p>
+      <div id="pic-gallery"></div>
+    </section>
+
+    <section>
+      <h2>OBJECT inventory</h2>
+      <p id="object-status"></p>
+      <table id="object-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Start room</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>WORDS vocabulary</h2>
+      <p id="words-status"></p>
+      <div id="word-groups"></div>
+    </section>
+
+    <section>
+      <h2>SOUND playback</h2>
+      <p id="sound-status"></p>
+      <div id="sound-list"></div>
+    </section>
+
+    <script type="module" src="/src/viewer.ts"></script>
+  </body>
+</html>
