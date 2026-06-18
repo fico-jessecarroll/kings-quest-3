@@ -122,6 +122,19 @@
     </section>
 
     <section>
+      <h2>Screen renderer (placeholder sprites &amp; text)</h2>
+      <p>320x200 canvas: blitted PIC background, placeholder priority-coloured sprite boxes for ego (no VIEW assets), and text.ts message windows/status line/menu bar.</p>
+      <p id="render-status"></p>
+      <p>
+        <button id="render-print">print()</button>
+        <button id="render-print-at">print.at()</button>
+        <button id="render-display">display()</button>
+        <button id="render-menu">toggle menu bar</button>
+      </p>
+      <canvas id="render-canvas" style="image-rendering: pixelated; border: 1px solid #444;"></canvas>
+    </section>
+
+    <section>
       <h2>VM sound commands</h2>
       <p>Drives the same <code>sound</code> / <code>load.sound</code> / <code>stop.sound</code> commands room logic calls, through the real Interpreter and SoundController.</p>
       <p><label><input type="checkbox" id="vm-sound-enabled" checked /> sound enabled</label></p>

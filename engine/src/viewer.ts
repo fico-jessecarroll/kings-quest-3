@@ -10,6 +10,9 @@ import { Interpreter } from './vm/interpreter';
 import { VmState } from './vm/state';
 import { SoundController } from './vm/soundController';
 import type { CallNode, Logic } from './logic/ir';
+import { renderFrame } from './render/frame';
+import { drawMenuBar } from './render/text';
+import { sizeScreenCanvas } from './render/screen';
 
 // AGI resource numbers are a single byte (0-255); probing the whole range
 // over fetch and keeping only the ones that resolve is simpler and more
@@ -245,8 +248,93 @@ async function setupVmSoundDemo(): Promise<void> {
   );
 }
 
+// Demo messages keyed the same way a logic's %message table would be -
+// resolveMessage below stands in for the real logic-message lookup, which
+// isn't wired up yet.
+const RENDER_DEMO_MESSAGES: Record<number, string> = {
+  1: "Welcome to the placeholder renderer! This long line exercises text.ts's word wrap inside a print() message window.",
+  2: 'A shorter print.at() window, anchored at a specific row and column.',
+  3: 'HP: 10',
+};
+
+/**
+ * Exercises screen.ts/sprites.ts/text.ts together against a real decoded
+ * PIC: blits the background, draws placeholder priority-coloured boxes for
+ * ego and two animated objects (no VIEW assets exist yet), and lets the
+ * status line/message windows/menu bar be toggled on demand. This is the
+ * manual smoke test called out in the screen-renderer story, since none of
+ * the canvas drawing itself is unit tested.
+ */
+async function setupRenderDemo(): Promise<void> {
+  const canvas = document.getElementById('render-canvas') as HTMLCanvasElement | null;
+  if (!canvas) return;
+
+  setStatus('render-status', 'Loading...');
+  let visualBytes: Uint8Array;
+  try {
+    const res = await fetch('/PIC/PIC.1');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    visualBytes = new Uint8Array(await res.arrayBuffer());
+  } catch (err) {
+    setStatus('render-status', `Failed to load PIC.1: ${String(err)}`);
+    console.error(err);
+    return;
+  }
+
+  sizeScreenCanvas(canvas);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const state = new VmState();
+  state.setPictureBuffers(decodePic(visualBytes));
+  state.setPictureVisible(true);
+  state.setScore(12);
+  state.setMaxScore(100);
+
+  // Ego plus two animated objects at different depths, so their placeholder
+  // boxes land at visibly different priority colours/y positions.
+  state.setPosition(0, 76, 150); // ego, automatic priority (near the bottom -> high band)
+  state.setPosition(1, 30, 40);
+  state.setPriority(1, 6); // fixed priority, far away
+  state.setPosition(2, 120, 100); // automatic priority, mid-screen
+
+  let menuOpen = false;
+
+  function redraw(): void {
+    if (!ctx) return;
+    renderFrame(ctx, state, {
+      spriteObjectNumbers: [0, 1, 2],
+      resolveMessage: (n) => RENDER_DEMO_MESSAGES[n],
+    });
+    if (menuOpen) {
+      drawMenuBar(ctx, ['File', 'Game', 'Sound', 'Speed']);
+    }
+  }
+
+  document.getElementById('render-print')?.addEventListener('click', () => {
+    state.setDisplay({ kind: 'print', message: 1 });
+    redraw();
+  });
+  document.getElementById('render-print-at')?.addEventListener('click', () => {
+    state.setDisplay({ kind: 'print.at', message: 2, row: 10, col: 5, width: 20 });
+    redraw();
+  });
+  document.getElementById('render-display')?.addEventListener('click', () => {
+    state.setDisplay({ kind: 'display', message: 3, row: 24, col: 2 });
+    redraw();
+  });
+  document.getElementById('render-menu')?.addEventListener('click', () => {
+    menuOpen = !menuOpen;
+    redraw();
+  });
+
+  redraw();
+  setStatus('render-status', 'Rendered PIC.1 with placeholder sprites. Use the buttons above to exercise text.ts.');
+}
+
 void loadPics();
 void loadObjects();
 void loadWords();
 void loadSounds();
 void setupVmSoundDemo();
+void setupRenderDemo();
