@@ -1,0 +1,14 @@
+Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.
+Branch pushed successfully.
+
+## Summary
+
+Implemented keyboard and text-parser input for the AGI engine clone:
+
+- **`engine/src/input/keyboard.ts`** — `KeyboardInput` tracks held arrow keys and resolves AGI's 8-way `ego.dir` (var 6), including diagonals and opposite-key cancellation, writing it via `VmState`. Dispatches Enter/Escape/menu-key (default `F10`) to caller callbacks. All key-down handling is gated by `isInputEnabled()` (`accept.input`/`prevent.input`); key-up always processes so a held direction can't get stuck.
+- **`engine/src/input/parser-ui.ts`** — `ParserUi` wraps `InputParser.acceptInput` (tokenizing via WORDS, feeding `said()`), gated the same way. `bindParserInputElement` wires a real `<input>`'s Enter key to it.
+- **`engine/src/main.ts`** — wires both to real DOM events (window-level keydown/keyup, a text entry line with Escape-to-clear, a parser log, and a live debug readout).
+
+TDD: 27 new tests (18 keyboard, 9 parser-ui), all passing; full suite is 373/373, `tsc --noEmit` clean. I also drove the actual running app with Playwright against the Vite dev server (arrows → direction readout including diagonals, Enter → tokenized submission against real `WORDS.TOK`, empty/whitespace dropped, Escape clears without submitting, and toggling `prevent.input`/`accept.input` suppressed and restored both movement and submission).
+
+The `mcp__pipeline__checkpoint` tool was never granted permission in this session, so I wasn't able to record progress checkpoints — work proceeded and completed regardless. Commit `b47f8b4` is pushed to `agent/02b4e930-38d2-4bd1-9eeb-88ba6a87dfce`.
