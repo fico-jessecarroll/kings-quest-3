@@ -534,6 +534,21 @@ describe('ObjectTable: ignore.objs/observe.objs', () => {
   });
 });
 
+describe('ObjectTable: terrain (object.on.water/object.on.land/object.on.anything)', () => {
+  it('defaults to null, and tracks the most recently set terrain constraint', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    expect(table.getObject(1).terrain).toBeNull();
+
+    table.setTerrain(1, 'water');
+    expect(table.getObject(1).terrain).toBe('water');
+
+    table.setTerrain(1, 'land');
+    expect(table.getObject(1).terrain).toBe('land');
+  });
+});
+
 describe('ObjectTable: force.update', () => {
   it('defaults to no force-update pending, and records a request until cleared', () => {
     const state = new VmState();
@@ -568,6 +583,42 @@ describe('ObjectTable: reposition.to', () => {
     table.update();
 
     expect(state.getPosition(1)).toEqual({ x: 10, y: 5 });
+    expect(table.getObject(1).motion).toBe('normal');
+  });
+});
+
+describe('ObjectTable: reposition (relative, distinct from reposition.to)', () => {
+  it('moves an object by a relative delta from its current position', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    state.setPosition(1, 10, 5);
+
+    table.reposition(1, 3, -2);
+
+    expect(state.getPosition(1)).toEqual({ x: 13, y: 3 });
+  });
+
+  it('saturates at the screen byte range instead of throwing', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    state.setPosition(1, 2, 253);
+
+    table.reposition(1, -10, 10);
+
+    expect(state.getPosition(1)).toEqual({ x: 0, y: 255 });
+  });
+
+  it('cancels any in-progress move/follow order', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    table.moveObj(1, 100, 100, 1, 30);
+
+    table.reposition(1, 1, 1);
+    table.update();
+
     expect(table.getObject(1).motion).toBe('normal');
   });
 });

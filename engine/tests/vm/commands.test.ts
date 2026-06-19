@@ -7,6 +7,11 @@ import type { CommandContext } from '../../src/vm/interpreter';
 // F6: absolute line (0,0)->(3,0) in both buffers. FF: end.
 const SAMPLE_PIC_BYTES = Uint8Array.from([0xf0, 0x01, 0xf2, 0x0c, 0xf6, 0x00, 0x00, 0x03, 0x00, 0xff]);
 
+// Same shape as SAMPLE_PIC_BYTES but drawing a disjoint line (5,0)->(8,0) in
+// different colours, for exercising overlay.pic's merge against the buffers
+// SAMPLE_PIC_BYTES already drew.
+const OVERLAY_PIC_BYTES = Uint8Array.from([0xf0, 0x02, 0xf2, 0x09, 0xf6, 0x05, 0x00, 0x08, 0x00, 0xff]);
+
 function ctx(state: VmState, ...args: CommandContext['args']): CommandContext {
   return { state, args };
 }
@@ -69,6 +74,48 @@ describe('createCommands: load.pic/draw.pic/show.pic/discard.pic', () => {
   });
 });
 
+describe('createCommands: overlay.pic', () => {
+  it('draws onto whatever is already on screen instead of replacing it', () => {
+    const state = new VmState();
+    const loadPictureResource = vi.fn((picture: number) => (picture === 1 ? SAMPLE_PIC_BYTES : OVERLAY_PIC_BYTES));
+    const commands = createCommands({ loadPictureResource });
+
+    commands['draw.pic'](ctx(state, 1));
+    commands['overlay.pic'](ctx(state, 2));
+
+    const buffers = state.getPictureBuffers()!;
+    // The original line (0-3) survives the overlay...
+    expect(buffers.visual[0]).toBe(1);
+    expect(buffers.priority[0]).toBe(12);
+    // ...and the overlay's own line (5-8) is now drawn on top of it.
+    expect(buffers.visual[5]).toBe(2);
+    expect(buffers.priority[5]).toBe(9);
+  });
+
+  it('with nothing drawn yet, behaves like draw.pic onto a blank screen', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => OVERLAY_PIC_BYTES });
+
+    commands['overlay.pic'](ctx(state, 2));
+
+    const buffers = state.getPictureBuffers()!;
+    expect(buffers.visual[5]).toBe(2);
+    expect(buffers.priority[5]).toBe(9);
+  });
+
+  it('logs once and leaves buffers untouched when the resource is missing', () => {
+    const state = new VmState();
+    const logger = vi.fn();
+    const commands = createCommands({ loadPictureResource: () => undefined, logger });
+
+    commands['overlay.pic'](ctx(state, 99));
+    commands['overlay.pic'](ctx(state, 99));
+
+    expect(state.getPictureBuffers()).toBeNull();
+    expect(logger).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('createCommands: add.to.pic', () => {
   it('records the call (no view decoder exists yet to paint the cel)', () => {
     const state = new VmState();
@@ -77,6 +124,26 @@ describe('createCommands: add.to.pic', () => {
     commands['add.to.pic'](ctx(state, 3, 0, 1, 10, 20, 8, 0));
 
     expect(state.getAddToPicCalls()).toEqual([{ view: 3, loop: 0, cel: 1, x: 10, y: 20, priority: 8, margin: 0 }]);
+  });
+
+  it('add.to.pic.f/add.to.pic.v resolve every argument from a var', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    for (const [varIndex, value] of [[60, 3], [61, 0], [62, 1], [63, 10], [64, 20], [65, 8], [66, 0]] as const) {
+      state.setVar(varIndex, value);
+    }
+
+    commands['add.to.pic.f'](ctx(state, 60, 61, 62, 63, 64, 65, 66));
+    expect(state.getAddToPicCalls()).toEqual([{ view: 3, loop: 0, cel: 1, x: 10, y: 20, priority: 8, margin: 0 }]);
+
+    commands['add.to.pic.v'](ctx(state, 60, 61, 62, 63, 64, 65, 66));
+    expect(state.getAddToPicCalls()).toHaveLength(2);
+  });
+
+  it('add.to.picture.v is the same var-indexed implementation', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    expect(commands['add.to.picture.v']).toBe(commands['add.to.pic.f']);
   });
 });
 
@@ -89,6 +156,19 @@ describe('createCommands: print/print.at/display', () => {
     expect(state.getDisplay()).toEqual({ kind: 'print', message: 1 });
   });
 
+  it('print.f/print.v resolve the message number from a var', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(36, 1);
+
+    commands['print.f'](ctx(state, 36));
+    expect(state.getDisplay()).toEqual({ kind: 'print', message: 1 });
+
+    state.setVar(37, 5);
+    commands['print.v'](ctx(state, 37));
+    expect(state.getDisplay()).toEqual({ kind: 'print', message: 5 });
+  });
+
   it('print.at records the message, row, col and width', () => {
     const state = new VmState();
     const commands = createCommands({ loadPictureResource: () => undefined });
@@ -97,11 +177,31 @@ describe('createCommands: print/print.at/display', () => {
     expect(state.getDisplay()).toEqual({ kind: 'print.at', message: 16, row: 2, col: 2, width: 37 });
   });
 
+  it('print.at.v resolves only the message number from a var, leaving row/col/width literal', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(36, 16);
+
+    commands['print.at.v'](ctx(state, 36, 2, 2, 37));
+    expect(state.getDisplay()).toEqual({ kind: 'print.at', message: 16, row: 2, col: 2, width: 37 });
+  });
+
   it('display records the row, col and message', () => {
     const state = new VmState();
     const commands = createCommands({ loadPictureResource: () => undefined });
 
     commands['display'](ctx(state, 0, 20, 30));
+    expect(state.getDisplay()).toEqual({ kind: 'display', message: 30, row: 0, col: 20 });
+  });
+
+  it('display.f resolves row, col and message all from vars', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(38, 0);
+    state.setVar(37, 20);
+    state.setVar(36, 30);
+
+    commands['display.f'](ctx(state, 38, 37, 36));
     expect(state.getDisplay()).toEqual({ kind: 'display', message: 30, row: 0, col: 20 });
   });
 });
@@ -188,6 +288,12 @@ describe('createCommands: position/position.v/get.posn', () => {
     expect(state.getPosition(0)).toEqual({ x: 38, y: 158 });
   });
 
+  it('position.f is the same var-indexed implementation as position.v', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    expect(commands['position.f']).toBe(commands['position.v']);
+  });
+
   it('get.posn writes an object coordinates into two vars', () => {
     const state = new VmState();
     const commands = createCommands({ loadPictureResource: () => undefined });
@@ -196,6 +302,12 @@ describe('createCommands: position/position.v/get.posn', () => {
     commands['get.posn'](ctx(state, 0, 60, 61));
     expect(state.getVar(60)).toBe(38);
     expect(state.getVar(61)).toBe(158);
+  });
+
+  it('get.position is the same implementation as get.posn', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    expect(commands['get.position']).toBe(commands['get.posn']);
   });
 });
 
@@ -208,6 +320,19 @@ describe('createCommands: set.priority/release.priority', () => {
     expect(state.getPriority(0)).toBe(12);
     commands['release.priority'](ctx(state, 0));
     expect(state.getPriority(0)).toBeNull();
+  });
+
+  it('set.priority.f/set.priority.v resolve the priority from a var, with the object still a literal', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(60, 12);
+
+    commands['set.priority.f'](ctx(state, 0, 60));
+    expect(state.getPriority(0)).toBe(12);
+
+    state.setVar(61, 5);
+    commands['set.priority.v'](ctx(state, 3, 61));
+    expect(state.getPriority(3)).toBe(5);
   });
 });
 
@@ -483,6 +608,15 @@ describe('createCommands: show.obj/status/obj.status.f', () => {
     expect(state.getDisplay()).toEqual({ kind: 'show.obj', object: 9 });
   });
 
+  it('show.obj.v resolves the object number from a var', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(36, 9);
+
+    commands['show.obj.v'](ctx(state, 36));
+    expect(state.getDisplay()).toEqual({ kind: 'show.obj', object: 9 });
+  });
+
   it('status records a status display event with no object', () => {
     const state = new VmState();
     const commands = createCommands({ loadPictureResource: () => undefined });
@@ -544,5 +678,115 @@ describe('createCommands: get.string/get.num/set.string and tests.compare.string
 
     state.setString(2, 'goodbye');
     expect(commandTests['compare.strings'](ctx(state, 1, 2))).toBe(false);
+  });
+});
+
+describe('createCommands: clear.lines/open.dialogue/close.dialogue/status.line.on/status.line.off', () => {
+  it('clear.lines records the row range and colour', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['clear.lines'](ctx(state, 22, 24, 0));
+    expect(state.getClearLinesCall()).toEqual({ row1: 22, row2: 24, color: 0 });
+  });
+
+  it('open.dialogue/close.dialogue toggle the dialogue-open state', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    expect(state.isDialogueOpen()).toBe(false);
+    commands['open.dialogue'](ctx(state));
+    expect(state.isDialogueOpen()).toBe(true);
+    commands['close.dialogue'](ctx(state));
+    expect(state.isDialogueOpen()).toBe(false);
+  });
+
+  it('status.line.on/status.line.off toggle status-line visibility', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['status.line.off'](ctx(state));
+    expect(state.isStatusLineVisible()).toBe(false);
+    commands['status.line.on'](ctx(state));
+    expect(state.isStatusLineVisible()).toBe(true);
+  });
+});
+
+describe('createCommands: text.screen/graphics/shake.screen', () => {
+  it('text.screen/graphics switch the tracked screen mode', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    expect(state.getScreenMode()).toBe('graphics');
+    commands['text.screen'](ctx(state));
+    expect(state.getScreenMode()).toBe('text');
+    commands['graphics'](ctx(state));
+    expect(state.getScreenMode()).toBe('graphics');
+  });
+
+  it('shake.screen records the requested duration', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['shake.screen'](ctx(state, 4));
+    expect(state.getShakeDuration()).toBe(4);
+  });
+});
+
+describe('createCommands: debug/system no-ops', () => {
+  it('register every low-value debug/system command as a callable no-op, leaving state untouched', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    const names = [
+      'log',
+      'quit',
+      'version',
+      'pause',
+      'restart.game',
+      'save.game',
+      'restore.game',
+      'init.joy',
+      'menu.input',
+      'submit.menu',
+      'echo.line',
+      'cancel.line',
+      'show.mem',
+      'show.pri.screen',
+      'set.cursor.char',
+      'set.game.id',
+      'trace.info',
+      'toggle.monitor',
+      'configure.screen',
+    ];
+
+    for (const name of names) {
+      expect(commands[name]).toBeTypeOf('function');
+      expect(() => commands[name](ctx(state, 1, 2, 3))).not.toThrow();
+    }
+  });
+});
+
+describe('tests.isset.v', () => {
+  it('reads the flag whose number is held in a var', () => {
+    const state = new VmState();
+    state.setVar(60, 10);
+    state.setFlag(10, true);
+
+    expect(commandTests['isset.v'](ctx(state, 60))).toBe(true);
+
+    state.setFlag(10, false);
+    expect(commandTests['isset.v'](ctx(state, 60))).toBe(false);
+  });
+});
+
+describe('tests.have.key', () => {
+  it('is true exactly once after a key press is recorded, then false until the next one', () => {
+    const state = new VmState();
+
+    expect(commandTests['have.key'](ctx(state))).toBe(false);
+
+    state.recordKeyPress();
+    expect(commandTests['have.key'](ctx(state))).toBe(true);
+    expect(commandTests['have.key'](ctx(state))).toBe(false);
   });
 });

@@ -23,6 +23,11 @@ function numberArg(ctx: CommandContext, index: number): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
 
+/** Reinterprets a 0-255 byte as a signed -128..127 delta - `reposition`'s dx/dy vars store negative offsets this way, the same two's-complement encoding AGI itself uses for signed byte values. */
+function toSignedByte(value: number): number {
+  return value > 127 ? value - 256 : value;
+}
+
 export interface ObjectCommandsOptions {
   /** Receives one line per first-seen problem (bad args). Defaults to console.warn. */
   logger?: (message: string) => void;
@@ -272,6 +277,14 @@ export function createObjectCommands(
       table.normalMotion(args[0]);
     },
 
+    reposition: (ctx) => {
+      const args = requireNumbers(ctx, 'reposition', 3);
+      if (!args) return;
+      const [object, dxVar, dyVar] = args;
+      ensureAnimated(object);
+      table.reposition(object, toSignedByte(ctx.state.getVar(dxVar)), toSignedByte(ctx.state.getVar(dyVar)));
+    },
+
     'reposition.to': (ctx) => {
       const args = requireNumbers(ctx, 'reposition.to', 3);
       if (!args) return;
@@ -414,6 +427,27 @@ export function createObjectCommands(
       const [object, varOut] = args;
       ctx.state.setVar(varOut, ctx.state.getPriority(object) ?? 0);
     },
+
+    'object.on.water': (ctx) => {
+      const args = requireNumbers(ctx, 'object.on.water', 1);
+      if (!args) return;
+      ensureAnimated(args[0]);
+      table.setTerrain(args[0], 'water');
+    },
+
+    'object.on.land': (ctx) => {
+      const args = requireNumbers(ctx, 'object.on.land', 1);
+      if (!args) return;
+      ensureAnimated(args[0]);
+      table.setTerrain(args[0], 'land');
+    },
+
+    'object.on.anything': (ctx) => {
+      const args = requireNumbers(ctx, 'object.on.anything', 1);
+      if (!args) return;
+      ensureAnimated(args[0]);
+      table.setTerrain(args[0], 'anything');
+    },
   };
 
   // .v is the macro alias real CG source actually writes for the suffixed
@@ -423,6 +457,20 @@ export function createObjectCommands(
   for (const name of ['set.view', 'set.loop', 'set.cel', 'load.view', 'move.obj', 'reposition.to']) {
     commands[`${name}.v`] = commands[`${name}.f`];
   }
+
+  // SYSDEFS.AL also aliases the singular/plural and "beginning.of.loop"
+  // spellings below to the implementations above; some logics' compiled IR
+  // still carries the un-substituted spelling, so register both names.
+  commands['ignore.obj'] = commands['ignore.objs'];
+  commands['ignore.objects'] = commands['ignore.objs'];
+  commands['observe.obj'] = commands['observe.objs'];
+  commands['observe.objects'] = commands['observe.objs'];
+  commands['ignore.block'] = commands['ignore.blocks'];
+  commands['observe.block'] = commands['observe.blocks'];
+  commands['beginning.of.loop'] = commands['reverse.loop'];
+  commands['obj.on.water'] = commands['object.on.water'];
+  commands['obj.on.land'] = commands['object.on.land'];
+  commands['obj.on.anything'] = commands['object.on.anything'];
 
   return { commands, tests: {} };
 }

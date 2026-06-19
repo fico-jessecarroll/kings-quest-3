@@ -43,6 +43,7 @@ export enum Edge {
 
 export type MotionMode = 'normal' | 'wander' | 'follow' | 'move';
 export type CycleMode = 'normal' | 'endLoop' | 'reverseLoop' | 'reverseCycle';
+export type Terrain = 'water' | 'land' | 'anything';
 
 interface MoveOrder {
   x: number;
@@ -83,6 +84,8 @@ export interface AnimatedObject {
   ignoreObjs: boolean;
   /** Set by `force.update`. There's no render caching to bypass, so this is tracked as observable state only. */
   forceUpdate: boolean;
+  /** Set by `object.on.water`/`object.on.land`/`object.on.anything`. There's no priority-screen terrain sampling implemented, so this is tracked as observable state only. Null until one of those commands is called. */
+  terrain: Terrain | null;
 }
 
 interface InternalObject extends AnimatedObject {
@@ -140,6 +143,7 @@ function defaultObject(number: number): InternalObject {
     loopFixed: false,
     ignoreObjs: false,
     forceUpdate: false,
+    terrain: null,
     stepCount: 0,
     cycleCount: 0,
     wanderCount: 0,
@@ -169,6 +173,7 @@ function toPublic(obj: InternalObject): AnimatedObject {
     loopFixed,
     ignoreObjs,
     forceUpdate,
+    terrain,
   } = obj;
   return {
     number,
@@ -188,6 +193,7 @@ function toPublic(obj: InternalObject): AnimatedObject {
     loopFixed,
     ignoreObjs,
     forceUpdate,
+    terrain,
   };
 }
 
@@ -383,6 +389,10 @@ export class ObjectTable {
     this.get(objectNumber).forceUpdate = true;
   }
 
+  setTerrain(objectNumber: number, terrain: Terrain): void {
+    this.get(objectNumber).terrain = terrain;
+  }
+
   /** Exposes the configured cel-count lookup (clamped to at least 1) for callers like `last.cel` that need it outside a cycling update. */
   getCelCount(view: number, loop: number): number {
     return Math.max(1, this.getCelCountFn(view, loop));
@@ -395,6 +405,17 @@ export class ObjectTable {
     obj.moveOrder = null;
     obj.followOrder = null;
     this.state.setPosition(objectNumber, x, y);
+  }
+
+  /** Moves an object by a relative (dx, dy) delta - AGI's `reposition`, distinct from the absolute `reposition.to`. Bypasses screen/horizon clamping the same way, saturating at the screen edges instead of throwing if the delta would carry a coordinate out of byte range. */
+  reposition(objectNumber: number, dx: number, dy: number): void {
+    const obj = this.get(objectNumber);
+    obj.motion = 'normal';
+    obj.moveOrder = null;
+    obj.followOrder = null;
+    const { x, y } = this.state.getPosition(objectNumber);
+    const clamp = (value: number) => Math.max(0, Math.min(255, value));
+    this.state.setPosition(objectNumber, clamp(x + dx), clamp(y + dy));
   }
 
   // --- Motion ----------------------------------------------------------

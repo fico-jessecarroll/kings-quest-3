@@ -123,6 +123,10 @@ export class Interpreter {
   private readonly logger: (message: string) => void;
   private readonly loggedOnce = new Set<string>();
   private roomChangeRequested = false;
+  /** Per-logic resume point set by `set.scan.start`/cleared by `reset.scan.start`: the next time that logic number runs, it starts here instead of from the top. */
+  private readonly scanStart = new Map<number, number>();
+  private currentLogicNumber: number | null = null;
+  private currentPc = 0;
 
   constructor(options: InterpreterOptions) {
     this.state = options.state;
@@ -157,6 +161,16 @@ export class Interpreter {
       this.roomChangeRequested = true;
     });
 
+    this.commands.set('new.room.f', (ctx) => {
+      const roomVar = ctx.args[0];
+      if (typeof roomVar !== 'number') {
+        this.logOnce('new.room.f:bad-arg', `new.room.f(): expected a numeric var index, got ${String(roomVar)}`);
+        return;
+      }
+      this.state.setCurrentRoom(this.state.getVar(roomVar));
+      this.roomChangeRequested = true;
+    });
+
     this.commands.set('call', (ctx) => {
       const logicNumber = ctx.args[0];
       if (typeof logicNumber !== 'number') {
@@ -165,6 +179,16 @@ export class Interpreter {
       }
       this.runLogic(logicNumber);
     });
+
+    this.commands.set('call.f', (ctx) => {
+      const logicVar = ctx.args[0];
+      if (typeof logicVar !== 'number') {
+        this.logOnce('call.f:bad-arg', `call.f(): expected a numeric var index, got ${String(logicVar)}`);
+        return;
+      }
+      this.runLogic(this.state.getVar(logicVar));
+    });
+    this.commands.set('call.v', this.commands.get('call.f')!);
 
     this.commands.set('load.logics', (ctx) => {
       const logicNumber = ctx.args[0];
@@ -176,6 +200,33 @@ export class Interpreter {
         this.logics.set(logicNumber, loaded);
       } else {
         this.logOnce(`load.logics:${logicNumber}`, `load.logics(${logicNumber}): no logic loader configured or logic not found`);
+      }
+    });
+
+    this.commands.set('load.logics.f', (ctx) => {
+      const logicVar = ctx.args[0];
+      if (typeof logicVar !== 'number') {
+        this.logOnce('load.logics.f:bad-arg', `load.logics.f(): expected a numeric var index, got ${String(logicVar)}`);
+        return;
+      }
+      this.dispatchCommand('load.logics', [this.state.getVar(logicVar)]);
+    });
+
+    // `set.scan.start` marks the position right after itself as where the
+    // *currently running* logic should resume next time it's invoked,
+    // skipping everything before that point - real AGI's mechanism for a
+    // logic to run one-time setup on its first pass through a block, then
+    // fall straight to the per-tick part on every later cycle until
+    // `reset.scan.start` puts it back to the top.
+    this.commands.set('set.scan.start', () => {
+      if (this.currentLogicNumber !== null) {
+        this.scanStart.set(this.currentLogicNumber, this.currentPc + 1);
+      }
+    });
+
+    this.commands.set('reset.scan.start', () => {
+      if (this.currentLogicNumber !== null) {
+        this.scanStart.delete(this.currentLogicNumber);
       }
     });
   }
@@ -208,7 +259,13 @@ export class Interpreter {
       this.logOnce(`logic:${number}`, `logic ${number} is not loaded`);
       return;
     }
-    this.runProgram(this.getProgram(logic));
+    const previousLogicNumber = this.currentLogicNumber;
+    this.currentLogicNumber = number;
+    try {
+      this.runProgram(this.getProgram(logic), this.scanStart.get(number) ?? 0);
+    } finally {
+      this.currentLogicNumber = previousLogicNumber;
+    }
   }
 
   private getProgram(logic: Logic): Op[] {
@@ -220,8 +277,8 @@ export class Interpreter {
     return program;
   }
 
-  private runProgram(ops: Op[]): void {
-    let pc = 0;
+  private runProgram(ops: Op[], startPc = 0): void {
+    let pc = startPc;
     while (pc < ops.length) {
       if (this.roomChangeRequested) {
         return;
@@ -229,6 +286,7 @@ export class Interpreter {
       const op = ops[pc];
       switch (op.kind) {
         case 'stmt':
+          this.currentPc = pc;
           this.executeStatement(op.stmt);
           pc++;
           break;

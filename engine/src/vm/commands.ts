@@ -10,7 +10,7 @@
  * Registering a `new.room` here would silently override and break that.
  */
 
-import { decodePic } from '../resources/pic';
+import { decodePic, DEFAULT_PRIORITY_COLOR, DEFAULT_VISUAL_COLOR } from '../resources/pic';
 import type { CommandContext, CommandImpl, TestImpl } from './interpreter';
 import { wrapByte } from './interpreter';
 
@@ -85,6 +85,29 @@ export function createCommands(options: CommandsOptions): Record<string, Command
       ctx.state.setLoadedPictureNumber(null);
     },
 
+    /** Draws an additional picture resource on top of whatever's already on screen, rather than replacing it (unlike `draw.pic`). Pixels the new picture leaves at the decoder's default colour are treated as "not drawn here" and don't overwrite the existing buffers. */
+    'overlay.pic': (ctx) => {
+      const args = requireNumbers(ctx, 'overlay.pic', 1);
+      if (!args) return;
+      const [picture] = args;
+      const bytes = options.loadPictureResource(picture);
+      if (!bytes) {
+        logOnce(`overlay.pic:${picture}`, `overlay.pic(${picture}): picture resource not found`);
+        return;
+      }
+      const overlay = decodePic(bytes);
+      const existing = ctx.state.getPictureBuffers();
+      const visual = existing ? Uint8Array.from(existing.visual) : new Uint8Array(overlay.visual.length).fill(DEFAULT_VISUAL_COLOR);
+      const priority = existing
+        ? Uint8Array.from(existing.priority)
+        : new Uint8Array(overlay.priority.length).fill(DEFAULT_PRIORITY_COLOR);
+      for (let i = 0; i < overlay.visual.length; i++) {
+        if (overlay.visual[i] !== DEFAULT_VISUAL_COLOR) visual[i] = overlay.visual[i];
+        if (overlay.priority[i] !== DEFAULT_PRIORITY_COLOR) priority[i] = overlay.priority[i];
+      }
+      ctx.state.setPictureBuffers({ visual, priority });
+    },
+
     'add.to.pic': (ctx) => {
       const args = requireNumbers(ctx, 'add.to.pic', 7);
       if (!args) return;
@@ -92,10 +115,34 @@ export function createCommands(options: CommandsOptions): Record<string, Command
       ctx.state.recordAddToPic({ view, loop, cel, x, y, priority, margin });
     },
 
+    /** Var-indexed `add.to.pic`: real AGI's `.f`/`.v` spelling for this opcode resolves every one of its 7 args from a var, unlike the suffixed commands elsewhere in this module that only resolve one argument. */
+    'add.to.pic.f': (ctx) => {
+      const args = requireNumbers(ctx, 'add.to.pic.f', 7);
+      if (!args) return;
+      const [viewVar, loopVar, celVar, xVar, yVar, priorityVar, marginVar] = args;
+      const v = ctx.state.getVar.bind(ctx.state);
+      ctx.state.recordAddToPic({
+        view: v(viewVar),
+        loop: v(loopVar),
+        cel: v(celVar),
+        x: v(xVar),
+        y: v(yVar),
+        priority: v(priorityVar),
+        margin: v(marginVar),
+      });
+    },
+
     print: (ctx) => {
       const args = requireNumbers(ctx, 'print', 1);
       if (!args) return;
       ctx.state.setDisplay({ kind: 'print', message: args[0] });
+    },
+
+    /** Var-indexed `print`: the message number comes from a var rather than being a literal. */
+    'print.f': (ctx) => {
+      const args = requireNumbers(ctx, 'print.f', 1);
+      if (!args) return;
+      ctx.state.setDisplay({ kind: 'print', message: ctx.state.getVar(args[0]) });
     },
 
     'print.at': (ctx) => {
@@ -105,11 +152,32 @@ export function createCommands(options: CommandsOptions): Record<string, Command
       ctx.state.setDisplay({ kind: 'print.at', message, row, col, width });
     },
 
+    /** Var-indexed `print.at`: only the message number resolves through a var; row/col/width stay literal. */
+    'print.at.v': (ctx) => {
+      const numbers = requireNumbers(ctx, 'print.at.v', 4);
+      if (!numbers) return;
+      const [messageVar, row, col, width] = numbers;
+      ctx.state.setDisplay({ kind: 'print.at', message: ctx.state.getVar(messageVar), row, col, width });
+    },
+
     display: (ctx) => {
       const numbers = requireNumbers(ctx, 'display', 3);
       if (!numbers) return;
       const [row, col, message] = numbers;
       ctx.state.setDisplay({ kind: 'display', message, row, col });
+    },
+
+    /** Var-indexed `display`: row, col and message all resolve through vars. */
+    'display.f': (ctx) => {
+      const numbers = requireNumbers(ctx, 'display.f', 3);
+      if (!numbers) return;
+      const [rowVar, colVar, messageVar] = numbers;
+      ctx.state.setDisplay({
+        kind: 'display',
+        message: ctx.state.getVar(messageVar),
+        row: ctx.state.getVar(rowVar),
+        col: ctx.state.getVar(colVar),
+      });
     },
 
     set: (ctx) => {
@@ -191,6 +259,14 @@ export function createCommands(options: CommandsOptions): Record<string, Command
       if (!args) return;
       const [object, priority] = args;
       ctx.state.setPriority(object, priority);
+    },
+
+    /** Var-indexed `set.priority`: the object number is still a literal, the priority comes from a var. */
+    'set.priority.f': (ctx) => {
+      const args = requireNumbers(ctx, 'set.priority.f', 2);
+      if (!args) return;
+      const [object, priorityVar] = args;
+      ctx.state.setPriority(object, ctx.state.getVar(priorityVar));
     },
 
     'release.priority': (ctx) => {
@@ -345,6 +421,13 @@ export function createCommands(options: CommandsOptions): Record<string, Command
       ctx.state.setDisplay({ kind: 'show.obj', object: args[0] });
     },
 
+    /** Var-indexed `show.obj`: the object number comes from a var. */
+    'show.obj.v': (ctx) => {
+      const args = requireNumbers(ctx, 'show.obj.v', 1);
+      if (!args) return;
+      ctx.state.setDisplay({ kind: 'show.obj', object: ctx.state.getVar(args[0]) });
+    },
+
     status: (ctx) => {
       ctx.state.setDisplay({ kind: 'status' });
     },
@@ -375,6 +458,66 @@ export function createCommands(options: CommandsOptions): Record<string, Command
       const [index, message] = args;
       ctx.state.setString(index, getMessage(message) ?? String(message));
     },
+
+    'clear.lines': (ctx) => {
+      const args = requireNumbers(ctx, 'clear.lines', 3);
+      if (!args) return;
+      const [row1, row2, color] = args;
+      ctx.state.setClearLinesCall({ row1, row2, color });
+    },
+
+    'open.dialogue': (ctx) => {
+      ctx.state.setDialogueOpen(true);
+    },
+
+    'close.dialogue': (ctx) => {
+      ctx.state.setDialogueOpen(false);
+    },
+
+    'status.line.on': (ctx) => {
+      ctx.state.setStatusLineVisible(true);
+    },
+
+    'status.line.off': (ctx) => {
+      ctx.state.setStatusLineVisible(false);
+    },
+
+    'text.screen': (ctx) => {
+      ctx.state.setScreenMode('text');
+    },
+
+    graphics: (ctx) => {
+      ctx.state.setScreenMode('graphics');
+    },
+
+    'shake.screen': (ctx) => {
+      const args = requireNumbers(ctx, 'shake.screen', 1);
+      if (!args) return;
+      ctx.state.setShakeDuration(args[0]);
+    },
+
+    // Debug/system commands with no equivalent in this engine (no save
+    // system, joystick, or memory/trace display) - registered as no-ops so
+    // they don't spam "unimplemented command" warnings.
+    log: () => {},
+    quit: () => {},
+    version: () => {},
+    pause: () => {},
+    'restart.game': () => {},
+    'save.game': () => {},
+    'restore.game': () => {},
+    'init.joy': () => {},
+    'menu.input': () => {},
+    'submit.menu': () => {},
+    'echo.line': () => {},
+    'cancel.line': () => {},
+    'show.mem': () => {},
+    'show.pri.screen': () => {},
+    'set.cursor.char': () => {},
+    'set.game.id': () => {},
+    'trace.info': () => {},
+    'toggle.monitor': () => {},
+    'configure.screen': () => {},
   };
 
   // .v is the macro alias real CG source actually writes for these (SYSDEFS.AL:
@@ -382,6 +525,12 @@ export function createCommands(options: CommandsOptions): Record<string, Command
   commands['get.v'] = commands['get.f'];
   commands['put.v'] = commands['put.f'];
   commands['get.room.v'] = commands['get.room.f'];
+  commands['position.f'] = commands['position.v'];
+  commands['print.v'] = commands['print.f'];
+  commands['add.to.pic.v'] = commands['add.to.pic.f'];
+  commands['add.to.picture.v'] = commands['add.to.pic.f'];
+  commands['set.priority.v'] = commands['set.priority.f'];
+  commands['get.position'] = commands['get.posn'];
 
   return commands;
 }
@@ -414,6 +563,17 @@ export const tests: Record<string, TestImpl> = {
     const [a, b] = ctx.args.map(Number);
     const normalize = (s: string) => s.trim().toLowerCase();
     return normalize(ctx.state.getString(a)) === normalize(ctx.state.getString(b));
+  },
+
+  /** Var-indexed flag test: the flag number comes from a var, so it can't be expressed as a statically-resolved `if (flag.name)` the way a literal flag test is - it has to go through a real test-function call instead. */
+  'isset.v': (ctx) => {
+    const [flagVar] = ctx.args.map(Number);
+    return ctx.state.getFlag(ctx.state.getVar(flagVar));
+  },
+
+  /** True if a key has been pressed since the last check, consuming the pending state. */
+  'have.key': (ctx) => {
+    return ctx.state.consumeKeyPress();
   },
 };
 

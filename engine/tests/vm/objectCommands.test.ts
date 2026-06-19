@@ -231,6 +231,19 @@ describe('createObjectCommands: move.obj/follow.ego/wander/stop.motion/start.mot
   });
 });
 
+describe('createObjectCommands: reposition (relative, distinct from reposition.to)', () => {
+  it('moves an object by a signed delta read from two vars', () => {
+    const { state, commands } = setup();
+    commands['animate.obj'](ctx(state, 1));
+    state.setPosition(1, 10, 5);
+    state.setVar(1, 3);
+    state.setVar(2, 254); // two's-complement for -2
+
+    commands['reposition'](ctx(state, 1, 1, 2));
+    expect(state.getPosition(1)).toEqual({ x: 13, y: 3 });
+  });
+});
+
 describe('createObjectCommands: reposition.to', () => {
   it('reposition.to sets a literal position directly', () => {
     const { state, commands } = setup();
@@ -297,6 +310,56 @@ describe('createObjectCommands: block/unblock and the per-object collision/horiz
     const { table, state, commands } = setup();
     commands['set.horizon'](ctx(state, 40));
     expect(table.getHorizon()).toBe(40);
+  });
+
+  it('ignore.obj/ignore.objects/observe.obj/observe.objects are aliases for the plural spellings', () => {
+    const { commands } = setup();
+    expect(commands['ignore.obj']).toBe(commands['ignore.objs']);
+    expect(commands['ignore.objects']).toBe(commands['ignore.objs']);
+    expect(commands['observe.obj']).toBe(commands['observe.objs']);
+    expect(commands['observe.objects']).toBe(commands['observe.objs']);
+  });
+
+  it('ignore.block/observe.block are aliases for the plural spellings', () => {
+    const { commands } = setup();
+    expect(commands['ignore.block']).toBe(commands['ignore.blocks']);
+    expect(commands['observe.block']).toBe(commands['observe.blocks']);
+  });
+});
+
+describe('createObjectCommands: beginning.of.loop', () => {
+  it('is an alias for reverse.loop', () => {
+    const { commands } = setup();
+    expect(commands['beginning.of.loop']).toBe(commands['reverse.loop']);
+  });
+});
+
+describe('createObjectCommands: object.on.water/object.on.land/object.on.anything', () => {
+  it('record the per-object terrain constraint, auto-animating the object', () => {
+    const { table, state, commands } = setup();
+
+    commands['object.on.water'](ctx(state, 1));
+    expect(table.isAnimated(1)).toBe(true);
+    expect(table.getObject(1).terrain).toBe('water');
+
+    commands['object.on.land'](ctx(state, 1));
+    expect(table.getObject(1).terrain).toBe('land');
+
+    commands['object.on.anything'](ctx(state, 1));
+    expect(table.getObject(1).terrain).toBe('anything');
+  });
+
+  it('defaults to null until one of those commands is called', () => {
+    const { table, commands } = setup();
+    commands['animate.obj'](ctx(new VmState(), 2));
+    expect(table.getObject(2).terrain).toBeNull();
+  });
+
+  it('obj.on.water/obj.on.land/obj.on.anything are aliases for the object.on.* spellings', () => {
+    const { commands } = setup();
+    expect(commands['obj.on.water']).toBe(commands['object.on.water']);
+    expect(commands['obj.on.land']).toBe(commands['object.on.land']);
+    expect(commands['obj.on.anything']).toBe(commands['object.on.anything']);
   });
 });
 

@@ -111,6 +111,14 @@ export interface Menu {
   items: MenuItem[];
 }
 
+export type ScreenMode = 'text' | 'graphics';
+
+export interface ClearLinesCall {
+  row1: number;
+  row2: number;
+  color: number;
+}
+
 function assertIndex(index: number, count: number, label: string): void {
   if (!Number.isInteger(index) || index < 0 || index >= count) {
     throw new RangeError(`${label} index out of range: ${index} (expected 0-${count - 1})`);
@@ -155,6 +163,12 @@ export class VmState {
   private readonly menus: Menu[] = [];
   private readonly loadedViews = new Set<number>();
   private scriptSize = 0;
+  private screenMode: ScreenMode = 'graphics';
+  private statusLineVisible = true;
+  private dialogueOpen = false;
+  private clearLinesCall: ClearLinesCall | null = null;
+  private shakeDuration: number | null = null;
+  private keyPending = false;
 
   getFlag(index: number): boolean {
     assertIndex(index, FLAG_COUNT, 'flag');
@@ -433,5 +447,61 @@ export class VmState {
 
   setScriptSize(size: number): void {
     this.scriptSize = size;
+  }
+
+  /** `text.screen`/`graphics` - which display mode is current. There's no text-mode renderer yet, so this just tracks the requested mode. */
+  getScreenMode(): ScreenMode {
+    return this.screenMode;
+  }
+
+  setScreenMode(mode: ScreenMode): void {
+    this.screenMode = mode;
+  }
+
+  isStatusLineVisible(): boolean {
+    return this.statusLineVisible;
+  }
+
+  setStatusLineVisible(visible: boolean): void {
+    this.statusLineVisible = visible;
+  }
+
+  /** `open.dialogue`/`close.dialogue` - whether a modal dialogue box is up. There's no dialogue-box renderer yet, so this just tracks the open/closed state. */
+  isDialogueOpen(): boolean {
+    return this.dialogueOpen;
+  }
+
+  setDialogueOpen(open: boolean): void {
+    this.dialogueOpen = open;
+  }
+
+  /** Most recent `clear.lines` call, or null if none has happened yet. */
+  getClearLinesCall(): ClearLinesCall | null {
+    return this.clearLinesCall;
+  }
+
+  setClearLinesCall(call: ClearLinesCall): void {
+    this.clearLinesCall = call;
+  }
+
+  /** Duration (in AGI ticks) of the most recent `shake.screen` call, or null if it's never been called. There's no actual screen-shake animation yet, so this is tracked as observable state only. */
+  getShakeDuration(): number | null {
+    return this.shakeDuration;
+  }
+
+  setShakeDuration(duration: number): void {
+    this.shakeDuration = duration;
+  }
+
+  /** Records that a key was pressed, for `have.key` to observe. Set by the keyboard input layer on every keydown. */
+  recordKeyPress(): void {
+    this.keyPending = true;
+  }
+
+  /** True if a key has been pressed since the last call, consuming the pending flag - AGI's `have.key` test. */
+  consumeKeyPress(): boolean {
+    const pending = this.keyPending;
+    this.keyPending = false;
+    return pending;
   }
 }

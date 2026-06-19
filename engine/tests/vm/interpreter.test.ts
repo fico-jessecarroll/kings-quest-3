@@ -402,3 +402,142 @@ describe('Interpreter: runCycle and new.room', () => {
     expect(roomCmd).not.toHaveBeenCalled();
   });
 });
+
+describe('Interpreter: var-indexed new.room.f/call.f/call.v/load.logics.f', () => {
+  it('new.room.f resolves the room number from a var and aborts the cycle like new.room', () => {
+    const state = new VmState();
+    state.setCurrentRoom(1);
+    state.setVar(60, 7);
+    const interpreter = new Interpreter({
+      state,
+      logics: { 0: logicOf(call('new.room.f', [{ kind: 'number', value: 60 }])) },
+    });
+
+    interpreter.runLogic(0);
+    expect(state.getCurrentRoom()).toBe(7);
+  });
+
+  it('call.f/call.v resolve the logic number from a var', () => {
+    const calleeCmd = vi.fn();
+    const callee = logicOf(call('calleeCmd'));
+    const state = new VmState();
+    state.setVar(60, 2);
+    const interpreter = new Interpreter({
+      state,
+      logics: { 1: logicOf(call('call.f', [{ kind: 'number', value: 60 }])), 2: callee },
+      commands: { calleeCmd },
+    });
+
+    interpreter.runLogic(1);
+    expect(calleeCmd).toHaveBeenCalledTimes(1);
+
+    interpreter.loadLogic(1, logicOf(call('call.v', [{ kind: 'number', value: 60 }])));
+    interpreter.runLogic(1);
+    expect(calleeCmd).toHaveBeenCalledTimes(2);
+  });
+
+  it('load.logics.f resolves the logic number from a var, then call() can run it', () => {
+    const loadedCmd = vi.fn();
+    const loadedLogic = logicOf(call('loadedCmd'));
+    const logicLoader = vi.fn((n: number) => (n === 5 ? loadedLogic : undefined));
+    const state = new VmState();
+    state.setVar(60, 5);
+    const caller = logicOf(
+      call('load.logics.f', [{ kind: 'number', value: 60 }]),
+      call('call', [{ kind: 'number', value: 5 }])
+    );
+    const interpreter = new Interpreter({ state, logics: { 1: caller }, commands: { loadedCmd }, logicLoader });
+
+    interpreter.runLogic(1);
+    expect(logicLoader).toHaveBeenCalledWith(5);
+    expect(loadedCmd).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Interpreter: set.scan.start/reset.scan.start', () => {
+  it('resumes a logic right after its last set.scan.start call, skipping earlier statements', () => {
+    const cmdA = vi.fn();
+    const cmdB = vi.fn();
+    const logic = logicOf(call('cmdA'), call('set.scan.start'), call('cmdB'));
+    const interpreter = new Interpreter({
+      state: new VmState(),
+      logics: { 1: logic },
+      commands: { cmdA, cmdB },
+    });
+
+    interpreter.runLogic(1);
+    expect(cmdA).toHaveBeenCalledTimes(1);
+    expect(cmdB).toHaveBeenCalledTimes(1);
+
+    interpreter.runLogic(1);
+    expect(cmdA).toHaveBeenCalledTimes(1);
+    expect(cmdB).toHaveBeenCalledTimes(2);
+  });
+
+  it('reset.scan.start puts the logic back to the top for its next run', () => {
+    const cmdA = vi.fn();
+    const cmdB = vi.fn();
+    const logic = logicOf(call('cmdA'), call('set.scan.start'), call('cmdB'), call('reset.scan.start'));
+    const interpreter = new Interpreter({
+      state: new VmState(),
+      logics: { 1: logic },
+      commands: { cmdA, cmdB },
+    });
+
+    interpreter.runLogic(1);
+    expect(cmdA).toHaveBeenCalledTimes(1);
+    expect(cmdB).toHaveBeenCalledTimes(1);
+
+    interpreter.runLogic(1);
+    expect(cmdA).toHaveBeenCalledTimes(2);
+    expect(cmdB).toHaveBeenCalledTimes(2);
+  });
+
+  it('tracks the resume point independently per logic number', () => {
+    const aCmd = vi.fn();
+    const bCmd = vi.fn();
+    const interpreter = new Interpreter({
+      state: new VmState(),
+      logics: {
+        1: logicOf(call('set.scan.start'), call('aCmd')),
+        2: logicOf(call('bCmd')),
+      },
+      commands: { aCmd, bCmd },
+    });
+
+    interpreter.runLogic(1);
+    interpreter.runLogic(2);
+    interpreter.runLogic(1);
+
+    expect(aCmd).toHaveBeenCalledTimes(2);
+    expect(bCmd).toHaveBeenCalledTimes(1);
+  });
+
+  it('a logic that returns before reaching set.scan.start keeps resuming from the top', () => {
+    const cmdA = vi.fn();
+    const cmdB = vi.fn();
+    const logic = logicOf({
+      type: 'if',
+      test: { type: 'flagTest', name: 'ready' },
+      then: [call('set.scan.start'), call('cmdB')],
+      else: [{ type: 'return' }],
+    });
+    const state = new VmState();
+    const interpreter = new Interpreter({
+      state,
+      symbols: { ready: { kind: 'flag', value: 10 } },
+      logics: { 1: logic },
+      commands: { cmdA, cmdB },
+    });
+
+    interpreter.runLogic(1);
+    expect(cmdB).not.toHaveBeenCalled();
+
+    state.setFlag(10, true);
+    interpreter.runLogic(1);
+    expect(cmdB).toHaveBeenCalledTimes(1);
+
+    interpreter.runLogic(1);
+    expect(cmdB).toHaveBeenCalledTimes(2);
+  });
+});
