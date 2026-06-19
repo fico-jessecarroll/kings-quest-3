@@ -242,6 +242,13 @@ export class ObjectTable {
     return this.objects.has(objectNumber);
   }
 
+  /** Removes every animated object except ego - AGI's `unanimate.all`. */
+  unanimateAll(): void {
+    for (const objectNumber of [...this.objects.keys()]) {
+      this.unanimate(objectNumber);
+    }
+  }
+
   private get(objectNumber: number): InternalObject {
     const obj = this.objects.get(objectNumber);
     if (!obj) {
