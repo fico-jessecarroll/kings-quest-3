@@ -462,3 +462,121 @@ describe('ObjectTable: cycling', () => {
     expect(table.getObject(1).cycling).toBe(false);
   });
 });
+
+describe('ObjectTable: start.update/stop.update', () => {
+  it('defaults a newly animated object to updating', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    expect(table.getObject(1).updating).toBe(true);
+  });
+
+  it('stopUpdate freezes both motion and cycling without unanimating the object', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state, getCelCount: () => 4 });
+    table.animate(1);
+    state.setPosition(1, 50, 50);
+    table.setDirection(1, 3); // east
+    table.normalCycle(1);
+    table.stopUpdate(1);
+
+    table.update();
+
+    expect(table.isAnimated(1)).toBe(true);
+    expect(table.getObject(1).updating).toBe(false);
+    expect(state.getPosition(1)).toEqual({ x: 50, y: 50 });
+    expect(table.getObject(1).cel).toBe(0);
+  });
+
+  it('startUpdate resumes motion and cycling', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    state.setPosition(1, 50, 50);
+    table.setDirection(1, 3); // east
+    table.stopUpdate(1);
+    table.startUpdate(1);
+
+    table.update();
+
+    expect(table.getObject(1).updating).toBe(true);
+    expect(state.getPosition(1)).toEqual({ x: 51, y: 50 });
+  });
+});
+
+describe('ObjectTable: fix.loop/release.loop', () => {
+  it('defaults to not loop-fixed, and tracks fix/release as state', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    expect(table.getObject(1).loopFixed).toBe(false);
+
+    table.fixLoop(1);
+    expect(table.getObject(1).loopFixed).toBe(true);
+
+    table.releaseLoop(1);
+    expect(table.getObject(1).loopFixed).toBe(false);
+  });
+});
+
+describe('ObjectTable: ignore.objs/observe.objs', () => {
+  it('defaults to not ignoring other objects, and tracks the flag', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    expect(table.getObject(1).ignoreObjs).toBe(false);
+
+    table.setIgnoreObjs(1, true);
+    expect(table.getObject(1).ignoreObjs).toBe(true);
+
+    table.setIgnoreObjs(1, false);
+    expect(table.getObject(1).ignoreObjs).toBe(false);
+  });
+});
+
+describe('ObjectTable: force.update', () => {
+  it('defaults to no force-update pending, and records a request until cleared', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    expect(table.getObject(1).forceUpdate).toBe(false);
+
+    table.forceUpdate(1);
+    expect(table.getObject(1).forceUpdate).toBe(true);
+  });
+});
+
+describe('ObjectTable: reposition.to', () => {
+  it('moves an object directly to the given coordinates, bypassing horizon/edge clamping', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    table.setObserveHorizon(1, true);
+
+    table.repositionTo(1, 10, 5);
+
+    expect(state.getPosition(1)).toEqual({ x: 10, y: 5 });
+  });
+
+  it('cancels any in-progress move/follow order', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(1);
+    table.moveObj(1, 100, 100, 1, 30);
+
+    table.repositionTo(1, 10, 5);
+    table.update();
+
+    expect(state.getPosition(1)).toEqual({ x: 10, y: 5 });
+    expect(table.getObject(1).motion).toBe('normal');
+  });
+});
+
+describe('ObjectTable: getCelCount', () => {
+  it('exposes the configured cel-count lookup, clamped to at least 1', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state, getCelCount: (view, loop) => (view === 4 && loop === 1 ? 6 : 0) });
+    expect(table.getCelCount(4, 1)).toBe(6);
+    expect(table.getCelCount(0, 0)).toBe(1);
+  });
+});
