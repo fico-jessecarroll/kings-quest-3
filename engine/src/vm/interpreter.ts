@@ -287,12 +287,30 @@ export class Interpreter {
       switch (op.kind) {
         case 'stmt':
           this.currentPc = pc;
-          this.executeStatement(op.stmt);
+          try {
+            this.executeStatement(op.stmt);
+          } catch (e) {
+            this.logExecutionError(e);
+          }
           pc++;
           break;
-        case 'jumpIfFalse':
-          pc = this.evaluateBoolExpr(op.test) ? pc + 1 : op.target;
+        case 'jumpIfFalse': {
+          // A statement this codebase doesn't fully support yet (an
+          // unresolved symbol - e.g. one disabled via SYSDEFS's "#"-comment
+          // convention - or some other evaluation error) is treated the same
+          // way an unimplemented command/test is elsewhere in this class: as
+          // a no-op, here meaning "test failed", so one unsupported line
+          // can't take down the rest of the logic's cycle.
+          let passed: boolean;
+          try {
+            passed = this.evaluateBoolExpr(op.test);
+          } catch (e) {
+            this.logExecutionError(e);
+            passed = false;
+          }
+          pc = passed ? pc + 1 : op.target;
           break;
+        }
         case 'jump':
           pc = op.target;
           break;
@@ -348,7 +366,7 @@ export class Interpreter {
   private evaluateBoolExpr(expr: BoolExpr): boolean {
     switch (expr.type) {
       case 'flagTest':
-        return this.state.getFlag(this.resolveFlagIndex(expr.name));
+        return this.evaluateFlagTest(expr.name);
       case 'comparison': {
         const left = this.resolveNumericOperand(expr.left);
         const right = this.resolveNumericOperand(expr.right);
@@ -418,12 +436,24 @@ export class Interpreter {
     return entry.value;
   }
 
-  private resolveFlagIndex(name: string): number {
+  /** A bare identifier used as a boolean test (`if (name)`): a flag tests its bit, but AGI source also uses this same syntax to test a var against zero (e.g. `if (error.number)`), so a var-kind symbol resolves to "value != 0" instead. */
+  private evaluateFlagTest(name: string): boolean {
     const entry = this.symbols[name];
-    if (!entry || entry.kind !== 'flag' || typeof entry.value !== 'number') {
-      throw new Error(`cannot resolve "${name}" as a flag`);
+    if (!entry || typeof entry.value !== 'number') {
+      throw new Error(`cannot resolve "${name}" as a flag or var`);
     }
-    return entry.value;
+    if (entry.kind === 'var') {
+      return this.state.getVar(entry.value) !== 0;
+    }
+    if (entry.kind === 'flag') {
+      return this.state.getFlag(entry.value);
+    }
+    throw new Error(`cannot resolve "${name}" as a flag or var`);
+  }
+
+  private logExecutionError(e: unknown): void {
+    const message = e instanceof Error ? e.message : String(e);
+    this.logOnce(`error:${message}`, `[interpreter] statement execution error: ${message}`);
   }
 
   private logOnce(key: string, message: string): void {
