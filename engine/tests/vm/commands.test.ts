@@ -255,3 +255,294 @@ describe('tests.posn', () => {
     expect(commandTests['posn'](ctx(state, 0, 45, 95, 55, 105))).toBe(false);
   });
 });
+
+describe('tests.obj.in.box', () => {
+  it('behaves identically to posn (same box-containment check, for an arbitrary object)', () => {
+    const state = new VmState();
+    state.setPosition(3, 50, 100);
+
+    expect(commandTests['obj.in.box'](ctx(state, 3, 45, 95, 55, 105))).toBe(true);
+    expect(commandTests['obj.in.box'](ctx(state, 3, 0, 0, 10, 10))).toBe(false);
+  });
+});
+
+describe('createCommands: get/drop/put/get.room.f', () => {
+  it('get takes a literal object into inventory', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['get'](ctx(state, 13));
+    expect(state.isCarried(13)).toBe(true);
+  });
+
+  it('get.f/get.v resolve the object number from a var', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(36, 13);
+
+    commands['get.f'](ctx(state, 36));
+    expect(state.isCarried(13)).toBe(true);
+
+    state.setVar(37, 14);
+    commands['get.v'](ctx(state, 37));
+    expect(state.isCarried(14)).toBe(true);
+  });
+
+  it('drop sets the literal object room to 0, regardless of the current room', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.takeObject(13);
+
+    commands['drop'](ctx(state, 13));
+    expect(state.isCarried(13)).toBe(false);
+    expect(state.getObjectRoom(13)).toBe(0);
+  });
+
+  it('put drops a literal object into the room held by a var (room is always var-encoded)', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(0, 22); // e.g. current.room
+
+    commands['put'](ctx(state, 13, 0));
+    expect(state.getObjectRoom(13)).toBe(22);
+  });
+
+  it('put.f/put.v resolve both the object and the room from vars', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(36, 13);
+    state.setVar(37, 22);
+
+    commands['put.f'](ctx(state, 36, 37));
+    expect(state.getObjectRoom(13)).toBe(22);
+  });
+
+  it('get.room.f/get.room.v resolve the object from a var and write its room into another var', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setObjectRoom(13, 22);
+    state.setVar(36, 13);
+
+    commands['get.room.f'](ctx(state, 36, 60));
+    expect(state.getVar(60)).toBe(22);
+  });
+});
+
+describe('tests.has/obj.in.room', () => {
+  it('has is true once the object has been taken', () => {
+    const state = new VmState();
+    state.takeObject(13);
+    expect(commandTests['has'](ctx(state, 13))).toBe(true);
+    expect(commandTests['has'](ctx(state, 14))).toBe(false);
+  });
+
+  it('obj.in.room compares the object room against a var (always var-encoded)', () => {
+    const state = new VmState();
+    state.setObjectRoom(13, 22);
+    state.setVar(0, 22);
+
+    expect(commandTests['obj.in.room'](ctx(state, 13, 0))).toBe(true);
+
+    state.setVar(0, 23);
+    expect(commandTests['obj.in.room'](ctx(state, 13, 0))).toBe(false);
+  });
+});
+
+describe('createCommands: draw/erase', () => {
+  it('defaults an object to not visible, draw shows it, erase hides it', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    expect(state.isObjectVisible(3)).toBe(false);
+    commands['draw'](ctx(state, 3));
+    expect(state.isObjectVisible(3)).toBe(true);
+    commands['erase'](ctx(state, 3));
+    expect(state.isObjectVisible(3)).toBe(false);
+  });
+});
+
+describe('createCommands: random', () => {
+  it('writes a value in [low, high] into the target var, using the injected RNG', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined, random: () => 0.999 });
+
+    commands['random'](ctx(state, 10, 20, 60));
+    expect(state.getVar(60)).toBe(20);
+  });
+
+  it('defaults to Math.random when none is injected', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['random'](ctx(state, 5, 5, 60));
+    expect(state.getVar(60)).toBe(5);
+  });
+});
+
+describe('createCommands: distance', () => {
+  it('writes the Manhattan distance between two objects into a var', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setPosition(0, 10, 10);
+    state.setPosition(3, 14, 17);
+
+    commands['distance'](ctx(state, 0, 3, 60));
+    expect(state.getVar(60)).toBe(11);
+  });
+
+  it('clamps to 255', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setPosition(0, 0, 0);
+    state.setPosition(3, 159, 167);
+
+    commands['distance'](ctx(state, 0, 3, 60));
+    expect(state.getVar(60)).toBe(255);
+  });
+});
+
+describe('createCommands: addn/subn', () => {
+  it('addn adds an immediate constant to a var, wrapping at 256', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(1, 250);
+
+    commands['addn'](ctx(state, 1, 10));
+    expect(state.getVar(1)).toBe(4);
+  });
+
+  it('subn subtracts an immediate constant from a var, wrapping below 0', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(1, 5);
+
+    commands['subn'](ctx(state, 1, 10));
+    expect(state.getVar(1)).toBe(251);
+  });
+});
+
+describe('createCommands: set.text.attribute', () => {
+  it('sets the foreground/background colours', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['set.text.attribute'](ctx(state, 4, 12));
+    expect(state.getTextAttribute()).toEqual({ foreground: 4, background: 12 });
+  });
+});
+
+describe('createCommands: set.key and tests.controller', () => {
+  it('set.key maps an ascii/scan code pair to a controller number', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['set.key'](ctx(state, 0, 59, 7));
+    expect(state.getControllerForKey(0, 59)).toBe(7);
+  });
+
+  it('controller test reads whether that controller is currently active', () => {
+    const state = new VmState();
+    state.setControllerActive(7, true);
+    expect(commandTests['controller'](ctx(state, 7))).toBe(true);
+    expect(commandTests['controller'](ctx(state, 8))).toBe(false);
+  });
+});
+
+describe('createCommands: set.menu/set.menu.item/enable.item/disable.item', () => {
+  it('builds up a menu registry', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['set.menu'](ctx(state, 121));
+    commands['set.menu.item'](ctx(state, 122, 5));
+    commands['disable.item'](ctx(state, 5));
+
+    expect(state.getMenus()).toEqual([{ message: 121, items: [{ message: 122, controller: 5, enabled: false }] }]);
+
+    commands['enable.item'](ctx(state, 5));
+    expect(state.getMenus()[0].items[0].enabled).toBe(true);
+  });
+});
+
+describe('createCommands: script.size', () => {
+  it('records the requested script buffer size', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['script.size'](ctx(state, 127));
+    expect(state.getScriptSize()).toBe(127);
+  });
+});
+
+describe('createCommands: show.obj/status/obj.status.f', () => {
+  it('show.obj records a show.obj display event for a literal object', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['show.obj'](ctx(state, 9));
+    expect(state.getDisplay()).toEqual({ kind: 'show.obj', object: 9 });
+  });
+
+  it('status records a status display event with no object', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['status'](ctx(state));
+    expect(state.getDisplay()).toEqual({ kind: 'status' });
+  });
+
+  it('obj.status.f resolves the object from a var', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+    state.setVar(36, 9);
+
+    commands['obj.status.f'](ctx(state, 36));
+    expect(state.getDisplay()).toEqual({ kind: 'obj.status', object: 9 });
+  });
+});
+
+describe('createCommands: get.string/get.num/set.string and tests.compare.strings', () => {
+  it('get.string records the prompt without touching the string register', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['get.string'](ctx(state, 1, 27, 15, 1, 33));
+    expect(state.getDisplay()).toEqual({ kind: 'get.string', index: 1, message: 27, row: 15, col: 1, maxLength: 33 });
+    expect(state.getString(1)).toBe('');
+  });
+
+  it('get.num records the prompt without touching the target var', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['get.num'](ctx(state, 4, 60));
+    expect(state.getDisplay()).toEqual({ kind: 'get.num', message: 4, target: 60 });
+    expect(state.getVar(60)).toBe(0);
+  });
+
+  it('set.string resolves message text via the injected getMessage option', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined, getMessage: (n) => (n === 2 ? 'hello' : undefined) });
+
+    commands['set.string'](ctx(state, 0, 2));
+    expect(state.getString(0)).toBe('hello');
+  });
+
+  it('set.string falls back to the stringified message number with no getMessage option', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    commands['set.string'](ctx(state, 0, 2));
+    expect(state.getString(0)).toBe('2');
+  });
+
+  it('compare.strings does a case/whitespace-insensitive equality check between two string registers', () => {
+    const state = new VmState();
+    state.setString(1, '  Hello  ');
+    state.setString(2, 'hello');
+    expect(commandTests['compare.strings'](ctx(state, 1, 2))).toBe(true);
+
+    state.setString(2, 'goodbye');
+    expect(commandTests['compare.strings'](ctx(state, 1, 2))).toBe(false);
+  });
+});
