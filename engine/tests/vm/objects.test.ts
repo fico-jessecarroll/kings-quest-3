@@ -171,6 +171,7 @@ describe('ObjectTable: move.obj', () => {
     const state = new VmState();
     const table = new ObjectTable({ state });
     table.animate(1);
+    table.setObserveHorizon(1, false);
     state.setPosition(1, 10, 10);
 
     table.moveObj(1, 4, 16, 3, 10);
@@ -186,6 +187,7 @@ describe('ObjectTable: follow.ego', () => {
     const state = new VmState();
     const table = new ObjectTable({ state });
     table.animate(1);
+    table.setObserveHorizon(1, false);
     state.setPosition(EGO_OBJECT, 50, 50);
     state.setPosition(1, 0, 0);
 
