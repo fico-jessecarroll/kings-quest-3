@@ -70,6 +70,21 @@ export const DYNAMIC_LOCAL_RANGE = { first: 240, last: 255 } as const;
 
 export type EgoControlMode = 'player' | 'program';
 
+/**
+ * The subset of {@link VmState} that AGI's own save/restore persists: the
+ * flag/var arrays (which is where current room and score live, per
+ * {@link ReservedVar}) and the object-room table (where each inventory
+ * object currently sits, including the {@link CARRIED} sentinel). Everything
+ * else on `VmState` - picture buffers, display events, menus, key mappings -
+ * is per-room/per-tick presentation state that a restored game reconstructs
+ * by re-running room logic, not data a save needs to carry.
+ */
+export interface VmStateSnapshot {
+  flags: number[];
+  vars: number[];
+  objectRooms: [number, number][];
+}
+
 export interface PictureBuffers {
   visual: Uint8Array;
   priority: Uint8Array;
@@ -503,5 +518,24 @@ export class VmState {
     const pending = this.keyPending;
     this.keyPending = false;
     return pending;
+  }
+
+  /** Captures the saveable subset of state - see {@link VmStateSnapshot}. */
+  serialize(): VmStateSnapshot {
+    return {
+      flags: Array.from(this.flags),
+      vars: Array.from(this.vars),
+      objectRooms: [...this.objectRoom.entries()],
+    };
+  }
+
+  /** Overwrites the saveable subset of state from a snapshot previously produced by {@link serialize}. */
+  restore(snapshot: VmStateSnapshot): void {
+    this.flags.set(snapshot.flags);
+    this.vars.set(snapshot.vars);
+    this.objectRoom.clear();
+    for (const [objectNumber, room] of snapshot.objectRooms) {
+      this.objectRoom.set(objectNumber, room);
+    }
   }
 }
