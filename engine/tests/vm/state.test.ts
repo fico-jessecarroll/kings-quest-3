@@ -302,4 +302,147 @@ describe('VmState last display event', () => {
     state.setDisplay({ kind: 'display', message: 30, row: 0, col: 20 });
     expect(state.getDisplay()).toEqual({ kind: 'display', message: 30, row: 0, col: 20 });
   });
+
+  it('records show.obj/status/obj.status/get.string/get.num events the same way', () => {
+    const state = new VmState();
+
+    state.setDisplay({ kind: 'show.obj', object: 5 });
+    expect(state.getDisplay()).toEqual({ kind: 'show.obj', object: 5 });
+
+    state.setDisplay({ kind: 'status' });
+    expect(state.getDisplay()).toEqual({ kind: 'status' });
+
+    state.setDisplay({ kind: 'obj.status', object: 9 });
+    expect(state.getDisplay()).toEqual({ kind: 'obj.status', object: 9 });
+
+    state.setDisplay({ kind: 'get.string', index: 1, message: 27, row: 15, col: 1, maxLength: 33 });
+    expect(state.getDisplay()).toEqual({ kind: 'get.string', index: 1, message: 27, row: 15, col: 1, maxLength: 33 });
+
+    state.setDisplay({ kind: 'get.num', message: 4, target: 60 });
+    expect(state.getDisplay()).toEqual({ kind: 'get.num', message: 4, target: 60 });
+  });
+});
+
+describe('VmState object visibility (draw/erase)', () => {
+  it('defaults every object to not visible', () => {
+    const state = new VmState();
+    expect(state.isObjectVisible(0)).toBe(false);
+  });
+
+  it('draw makes an object visible, erase hides it again', () => {
+    const state = new VmState();
+    state.setObjectVisible(3, true);
+    expect(state.isObjectVisible(3)).toBe(true);
+    state.setObjectVisible(3, false);
+    expect(state.isObjectVisible(3)).toBe(false);
+  });
+});
+
+describe('VmState text attribute', () => {
+  it('defaults to foreground 15, background 0', () => {
+    const state = new VmState();
+    expect(state.getTextAttribute()).toEqual({ foreground: 15, background: 0 });
+  });
+
+  it('sets foreground/background colours', () => {
+    const state = new VmState();
+    state.setTextAttribute(4, 12);
+    expect(state.getTextAttribute()).toEqual({ foreground: 4, background: 12 });
+  });
+});
+
+describe('VmState key mappings', () => {
+  it('has no controller mapped for a key by default', () => {
+    const state = new VmState();
+    expect(state.getControllerForKey(59, 0)).toBeUndefined();
+  });
+
+  it('maps an ascii/scan key pair to a controller number', () => {
+    const state = new VmState();
+    state.setKeyMapping(0, 59, 7);
+    expect(state.getControllerForKey(0, 59)).toBe(7);
+  });
+
+  it('matches on either the ascii or the scan code alone', () => {
+    const state = new VmState();
+    state.setKeyMapping(43, 0, 9);
+    expect(state.getControllerForKey(43, 999)).toBe(9);
+  });
+});
+
+describe('VmState controller activation', () => {
+  it('defaults every controller to inactive', () => {
+    const state = new VmState();
+    expect(state.isControllerActive(3)).toBe(false);
+  });
+
+  it('activates and deactivates a controller', () => {
+    const state = new VmState();
+    state.setControllerActive(3, true);
+    expect(state.isControllerActive(3)).toBe(true);
+    state.setControllerActive(3, false);
+    expect(state.isControllerActive(3)).toBe(false);
+  });
+});
+
+describe('VmState menus', () => {
+  it('starts with no menus', () => {
+    const state = new VmState();
+    expect(state.getMenus()).toEqual([]);
+  });
+
+  it('adds a menu and items under it, tracking enabled state', () => {
+    const state = new VmState();
+    state.addMenu(121);
+    state.addMenuItem(122, 5);
+    state.addMenuItem(123, 6);
+
+    expect(state.getMenus()).toEqual([
+      { message: 121, items: [{ message: 122, controller: 5, enabled: true }, { message: 123, controller: 6, enabled: true }] },
+    ]);
+
+    state.setItemEnabled(5, false);
+    expect(state.getMenus()[0].items[0].enabled).toBe(false);
+  });
+
+  it('starts a new menu group for each addMenu call', () => {
+    const state = new VmState();
+    state.addMenu(121);
+    state.addMenuItem(122, 5);
+    state.addMenu(130);
+    state.addMenuItem(131, 6);
+
+    expect(state.getMenus()).toEqual([
+      { message: 121, items: [{ message: 122, controller: 5, enabled: true }] },
+      { message: 130, items: [{ message: 131, controller: 6, enabled: true }] },
+    ]);
+  });
+});
+
+describe('VmState loaded views', () => {
+  it('starts with no views loaded', () => {
+    const state = new VmState();
+    expect(state.isViewLoaded(4)).toBe(false);
+  });
+
+  it('loads and discards a view resource number', () => {
+    const state = new VmState();
+    state.loadView(4);
+    expect(state.isViewLoaded(4)).toBe(true);
+    state.discardView(4);
+    expect(state.isViewLoaded(4)).toBe(false);
+  });
+});
+
+describe('VmState script size', () => {
+  it('defaults to 0', () => {
+    const state = new VmState();
+    expect(state.getScriptSize()).toBe(0);
+  });
+
+  it('records the requested script buffer size', () => {
+    const state = new VmState();
+    state.setScriptSize(127);
+    expect(state.getScriptSize()).toBe(127);
+  });
 });

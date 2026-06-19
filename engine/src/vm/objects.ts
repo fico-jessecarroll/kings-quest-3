@@ -43,6 +43,7 @@ export enum Edge {
 
 export type MotionMode = 'normal' | 'wander' | 'follow' | 'move';
 export type CycleMode = 'normal' | 'endLoop' | 'reverseLoop' | 'reverseCycle';
+export type Terrain = 'water' | 'land' | 'anything';
 
 interface MoveOrder {
   x: number;
@@ -75,6 +76,16 @@ export interface AnimatedObject {
   cycling: boolean;
   observeHorizon: boolean;
   ignoreBlocks: boolean;
+  /** False once `stop.update` has frozen this object's motion and cycling; `start.update` resumes it. Unlike unanimate(), the object stays in the animated set. */
+  updating: boolean;
+  /** Set by `fix.loop`/`release.loop`. There's no direction-driven auto loop-selection implemented, so this is tracked as observable state only. */
+  loopFixed: boolean;
+  /** Set by `ignore.objs`/`observe.objs`. There's no per-object bounding-box collision implemented (no view dimensions to do it correctly), so this is tracked as observable state only. */
+  ignoreObjs: boolean;
+  /** Set by `force.update`. There's no render caching to bypass, so this is tracked as observable state only. */
+  forceUpdate: boolean;
+  /** Set by `object.on.water`/`object.on.land`/`object.on.anything`. There's no priority-screen terrain sampling implemented, so this is tracked as observable state only. Null until one of those commands is called. */
+  terrain: Terrain | null;
 }
 
 interface InternalObject extends AnimatedObject {
@@ -128,6 +139,11 @@ function defaultObject(number: number): InternalObject {
     cycling: false,
     observeHorizon: true,
     ignoreBlocks: false,
+    updating: true,
+    loopFixed: false,
+    ignoreObjs: false,
+    forceUpdate: false,
+    terrain: null,
     stepCount: 0,
     cycleCount: 0,
     wanderCount: 0,
@@ -139,8 +155,46 @@ function defaultObject(number: number): InternalObject {
 
 /** Strips the bookkeeping-only fields off an internal record for callers. */
 function toPublic(obj: InternalObject): AnimatedObject {
-  const { number, view, loop, cel, direction, stepSize, stepTime, cycleTime, motion, cycleMode, cycling, observeHorizon, ignoreBlocks } = obj;
-  return { number, view, loop, cel, direction, stepSize, stepTime, cycleTime, motion, cycleMode, cycling, observeHorizon, ignoreBlocks };
+  const {
+    number,
+    view,
+    loop,
+    cel,
+    direction,
+    stepSize,
+    stepTime,
+    cycleTime,
+    motion,
+    cycleMode,
+    cycling,
+    observeHorizon,
+    ignoreBlocks,
+    updating,
+    loopFixed,
+    ignoreObjs,
+    forceUpdate,
+    terrain,
+  } = obj;
+  return {
+    number,
+    view,
+    loop,
+    cel,
+    direction,
+    stepSize,
+    stepTime,
+    cycleTime,
+    motion,
+    cycleMode,
+    cycling,
+    observeHorizon,
+    ignoreBlocks,
+    updating,
+    loopFixed,
+    ignoreObjs,
+    forceUpdate,
+    terrain,
+  };
 }
 
 export interface ObjectTableOptions {
@@ -153,7 +207,7 @@ export interface ObjectTableOptions {
 
 export class ObjectTable {
   private readonly state: VmState;
-  private readonly getCelCount: (view: number, loop: number) => number;
+  private readonly getCelCountFn: (view: number, loop: number) => number;
   private readonly random: () => number;
   private readonly objects = new Map<number, InternalObject>();
   private horizon = DEFAULT_HORIZON;
@@ -161,7 +215,7 @@ export class ObjectTable {
 
   constructor(options: ObjectTableOptions) {
     this.state = options.state;
-    this.getCelCount = options.getCelCount ?? (() => 1);
+    this.getCelCountFn = options.getCelCount ?? (() => 1);
     this.random = options.random ?? Math.random;
     this.objects.set(EGO_OBJECT, defaultObject(EGO_OBJECT));
   }
@@ -192,6 +246,13 @@ export class ObjectTable {
 
   isAnimated(objectNumber: number): boolean {
     return this.objects.has(objectNumber);
+  }
+
+  /** Removes every animated object except ego - AGI's `unanimate.all`. */
+  unanimateAll(): void {
+    for (const objectNumber of [...this.objects.keys()]) {
+      this.unanimate(objectNumber);
+    }
   }
 
   private get(objectNumber: number): InternalObject {
@@ -302,6 +363,61 @@ export class ObjectTable {
     obj.cycling = true;
   }
 
+  // --- Update/loop/collision flags --------------------------------------
+
+  startUpdate(objectNumber: number): void {
+    this.get(objectNumber).updating = true;
+  }
+
+  stopUpdate(objectNumber: number): void {
+    this.get(objectNumber).updating = false;
+  }
+
+  fixLoop(objectNumber: number): void {
+    this.get(objectNumber).loopFixed = true;
+  }
+
+  releaseLoop(objectNumber: number): void {
+    this.get(objectNumber).loopFixed = false;
+  }
+
+  setIgnoreObjs(objectNumber: number, ignore: boolean): void {
+    this.get(objectNumber).ignoreObjs = ignore;
+  }
+
+  forceUpdate(objectNumber: number): void {
+    this.get(objectNumber).forceUpdate = true;
+  }
+
+  setTerrain(objectNumber: number, terrain: Terrain): void {
+    this.get(objectNumber).terrain = terrain;
+  }
+
+  /** Exposes the configured cel-count lookup (clamped to at least 1) for callers like `last.cel` that need it outside a cycling update. */
+  getCelCount(view: number, loop: number): number {
+    return Math.max(1, this.getCelCountFn(view, loop));
+  }
+
+  /** Moves an object directly to (x, y), bypassing screen/horizon clamping and cancelling any in-progress move/follow order - AGI's `reposition.to`. */
+  repositionTo(objectNumber: number, x: number, y: number): void {
+    const obj = this.get(objectNumber);
+    obj.motion = 'normal';
+    obj.moveOrder = null;
+    obj.followOrder = null;
+    this.state.setPosition(objectNumber, x, y);
+  }
+
+  /** Moves an object by a relative (dx, dy) delta - AGI's `reposition`, distinct from the absolute `reposition.to`. Bypasses screen/horizon clamping the same way, saturating at the screen edges instead of throwing if the delta would carry a coordinate out of byte range. */
+  reposition(objectNumber: number, dx: number, dy: number): void {
+    const obj = this.get(objectNumber);
+    obj.motion = 'normal';
+    obj.moveOrder = null;
+    obj.followOrder = null;
+    const { x, y } = this.state.getPosition(objectNumber);
+    const clamp = (value: number) => Math.max(0, Math.min(255, value));
+    this.state.setPosition(objectNumber, clamp(x + dx), clamp(y + dy));
+  }
+
   // --- Motion ----------------------------------------------------------
 
   normalMotion(objectNumber: number): void {
@@ -352,6 +468,7 @@ export class ObjectTable {
   update(): void {
     for (const objectNumber of [...this.objects.keys()].sort((a, b) => a - b)) {
       const obj = this.objects.get(objectNumber)!;
+      if (!obj.updating) continue;
       this.updateMotion(obj);
       this.updateCycling(obj);
     }
@@ -530,7 +647,7 @@ export class ObjectTable {
     if (obj.cycleCount < obj.cycleTime) return;
     obj.cycleCount = 0;
 
-    const celCount = Math.max(1, this.getCelCount(obj.view, obj.loop));
+    const celCount = this.getCelCount(obj.view, obj.loop);
 
     switch (obj.cycleMode) {
       case 'normal':

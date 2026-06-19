@@ -48,16 +48,22 @@ export function renderFrame(ctx: CanvasRenderingContext2D, state: VmState, optio
 
   const display = state.getDisplay();
   if (display) {
-    const text = options.resolveMessage?.(display.message) ?? `(message ${display.message})`;
     switch (display.kind) {
       case 'print':
-        drawMessageWindow(ctx, text);
+        drawMessageWindow(ctx, options.resolveMessage?.(display.message) ?? `(message ${display.message})`);
         break;
       case 'print.at':
-        drawPrintAt(ctx, text, display.row, display.col, display.width);
+        drawPrintAt(ctx, options.resolveMessage?.(display.message) ?? `(message ${display.message})`, display.row, display.col, display.width);
         break;
       case 'display':
-        drawDisplay(ctx, text, display.row, display.col);
+        drawDisplay(ctx, options.resolveMessage?.(display.message) ?? `(message ${display.message})`, display.row, display.col);
+        break;
+      case 'show.obj':
+      case 'status':
+      case 'obj.status':
+      case 'get.string':
+      case 'get.num':
+        // Not yet rendered: no inventory-screen, "look at object", or text-prompt UI exists yet.
         break;
     }
   }

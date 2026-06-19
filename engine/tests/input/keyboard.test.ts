@@ -114,6 +114,27 @@ describe('KeyboardInput accept.input/prevent.input gating', () => {
   });
 });
 
+describe('KeyboardInput records keys pressed for have.key', () => {
+  it('records every keydown, regardless of which key it is', () => {
+    const state = new VmState();
+    const input = new KeyboardInput({ state });
+
+    input.handleKeyDown('a');
+
+    expect(state.consumeKeyPress()).toBe(true);
+  });
+
+  it('does not record a key press while prevent.input is active', () => {
+    const state = new VmState();
+    state.setInputEnabled(false);
+    const input = new KeyboardInput({ state });
+
+    input.handleKeyDown('a');
+
+    expect(state.consumeKeyPress()).toBe(false);
+  });
+});
+
 describe('KeyboardInput Enter/Escape/menu callbacks', () => {
   let state: VmState;
 

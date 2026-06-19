@@ -2,7 +2,8 @@
  * Keyboard input: tracks which arrow keys are currently held (the way AGI's
  * own keyboard driver does) to drive ego's direction var, including the
  * eight-way diagonals from holding two adjacent arrows at once. Also
- * dispatches Enter, Escape, and a menu key to caller-supplied callbacks.
+ * dispatches Enter, Escape, and a menu key to caller-supplied callbacks, and
+ * records every keydown on {@link VmState} for the `have.key` test.
  *
  * New key presses are ignored while `prevent.input` is active
  * (`VmState.isInputEnabled() === false`) - see `accept.input`/
@@ -85,6 +86,7 @@ export class KeyboardInput {
     if (!this.state.isInputEnabled()) {
       return;
     }
+    this.state.recordKeyPress();
     if (isArrowKey(key)) {
       this.held[key] = true;
       this.updateDirection();

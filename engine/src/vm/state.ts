@@ -88,7 +88,36 @@ export interface AddToPicCall {
 export type DisplayEvent =
   | { kind: 'print'; message: number }
   | { kind: 'print.at'; message: number; row: number; col: number; width: number }
-  | { kind: 'display'; message: number; row: number; col: number };
+  | { kind: 'display'; message: number; row: number; col: number }
+  | { kind: 'show.obj'; object: number }
+  | { kind: 'status' }
+  | { kind: 'obj.status'; object: number }
+  | { kind: 'get.string'; index: number; message: number; row: number; col: number; maxLength: number }
+  | { kind: 'get.num'; message: number; target: number };
+
+export interface TextAttribute {
+  foreground: number;
+  background: number;
+}
+
+export interface MenuItem {
+  message: number;
+  controller: number;
+  enabled: boolean;
+}
+
+export interface Menu {
+  message: number;
+  items: MenuItem[];
+}
+
+export type ScreenMode = 'text' | 'graphics';
+
+export interface ClearLinesCall {
+  row1: number;
+  row2: number;
+  color: number;
+}
 
 function assertIndex(index: number, count: number, label: string): void {
   if (!Number.isInteger(index) || index < 0 || index >= count) {
@@ -126,6 +155,20 @@ export class VmState {
   private readonly priorities = new Map<number, number>();
   private readonly addToPicCalls: AddToPicCall[] = [];
   private display: DisplayEvent | null = null;
+  private readonly visibleObjects = new Set<number>();
+  private textAttribute: TextAttribute = { foreground: 15, background: 0 };
+  private readonly keyMappingsByAscii = new Map<number, number>();
+  private readonly keyMappingsByScan = new Map<number, number>();
+  private readonly activeControllers = new Set<number>();
+  private readonly menus: Menu[] = [];
+  private readonly loadedViews = new Set<number>();
+  private scriptSize = 0;
+  private screenMode: ScreenMode = 'graphics';
+  private statusLineVisible = true;
+  private dialogueOpen = false;
+  private clearLinesCall: ClearLinesCall | null = null;
+  private shakeDuration: number | null = null;
+  private keyPending = false;
 
   getFlag(index: number): boolean {
     assertIndex(index, FLAG_COUNT, 'flag');
@@ -309,5 +352,156 @@ export class VmState {
 
   setDisplay(event: DisplayEvent): void {
     this.display = event;
+  }
+
+  /** Whether `draw`/`erase` has most recently made this object visible. Defaults to false - an animated object isn't drawn until `draw` runs. */
+  isObjectVisible(objectNumber: number): boolean {
+    return this.visibleObjects.has(objectNumber);
+  }
+
+  setObjectVisible(objectNumber: number, visible: boolean): void {
+    if (visible) {
+      this.visibleObjects.add(objectNumber);
+    } else {
+      this.visibleObjects.delete(objectNumber);
+    }
+  }
+
+  getTextAttribute(): TextAttribute {
+    return this.textAttribute;
+  }
+
+  setTextAttribute(foreground: number, background: number): void {
+    this.textAttribute = { foreground, background };
+  }
+
+  /** Records that `controller` fires when either `asciiCode` or `scanCode` is pressed, per `set.key`'s two-codes-one-controller convention (function keys have no ascii equivalent, so callers pass 0 for whichever code doesn't apply). */
+  setKeyMapping(asciiCode: number, scanCode: number, controller: number): void {
+    if (asciiCode !== 0) {
+      this.keyMappingsByAscii.set(asciiCode, controller);
+    }
+    if (scanCode !== 0) {
+      this.keyMappingsByScan.set(scanCode, controller);
+    }
+  }
+
+  getControllerForKey(asciiCode: number, scanCode: number): number | undefined {
+    return this.keyMappingsByAscii.get(asciiCode) ?? this.keyMappingsByScan.get(scanCode);
+  }
+
+  isControllerActive(controller: number): boolean {
+    return this.activeControllers.has(controller);
+  }
+
+  setControllerActive(controller: number, active: boolean): void {
+    if (active) {
+      this.activeControllers.add(controller);
+    } else {
+      this.activeControllers.delete(controller);
+    }
+  }
+
+  /** Starts a new menu (`set.menu`); subsequent `addMenuItem` calls attach to this menu until the next `addMenu`. */
+  addMenu(message: number): void {
+    this.menus.push({ message, items: [] });
+  }
+
+  addMenuItem(message: number, controller: number): void {
+    const menu = this.menus[this.menus.length - 1];
+    if (!menu) {
+      throw new Error('addMenuItem called with no menu open - call addMenu first');
+    }
+    menu.items.push({ message, controller, enabled: true });
+  }
+
+  setItemEnabled(controller: number, enabled: boolean): void {
+    for (const menu of this.menus) {
+      for (const item of menu.items) {
+        if (item.controller === controller) {
+          item.enabled = enabled;
+        }
+      }
+    }
+  }
+
+  getMenus(): readonly Menu[] {
+    return this.menus;
+  }
+
+  /** Resource numbers loaded via `load.view`/`load.view.f`. There's no VIEW decoder yet, so this just tracks which numbers are "loaded" for `discard.view` and tests to observe. */
+  isViewLoaded(viewNumber: number): boolean {
+    return this.loadedViews.has(viewNumber);
+  }
+
+  loadView(viewNumber: number): void {
+    this.loadedViews.add(viewNumber);
+  }
+
+  discardView(viewNumber: number): void {
+    this.loadedViews.delete(viewNumber);
+  }
+
+  getScriptSize(): number {
+    return this.scriptSize;
+  }
+
+  setScriptSize(size: number): void {
+    this.scriptSize = size;
+  }
+
+  /** `text.screen`/`graphics` - which display mode is current. There's no text-mode renderer yet, so this just tracks the requested mode. */
+  getScreenMode(): ScreenMode {
+    return this.screenMode;
+  }
+
+  setScreenMode(mode: ScreenMode): void {
+    this.screenMode = mode;
+  }
+
+  isStatusLineVisible(): boolean {
+    return this.statusLineVisible;
+  }
+
+  setStatusLineVisible(visible: boolean): void {
+    this.statusLineVisible = visible;
+  }
+
+  /** `open.dialogue`/`close.dialogue` - whether a modal dialogue box is up. There's no dialogue-box renderer yet, so this just tracks the open/closed state. */
+  isDialogueOpen(): boolean {
+    return this.dialogueOpen;
+  }
+
+  setDialogueOpen(open: boolean): void {
+    this.dialogueOpen = open;
+  }
+
+  /** Most recent `clear.lines` call, or null if none has happened yet. */
+  getClearLinesCall(): ClearLinesCall | null {
+    return this.clearLinesCall;
+  }
+
+  setClearLinesCall(call: ClearLinesCall): void {
+    this.clearLinesCall = call;
+  }
+
+  /** Duration (in AGI ticks) of the most recent `shake.screen` call, or null if it's never been called. There's no actual screen-shake animation yet, so this is tracked as observable state only. */
+  getShakeDuration(): number | null {
+    return this.shakeDuration;
+  }
+
+  setShakeDuration(duration: number): void {
+    this.shakeDuration = duration;
+  }
+
+  /** Records that a key was pressed, for `have.key` to observe. Set by the keyboard input layer on every keydown. */
+  recordKeyPress(): void {
+    this.keyPending = true;
+  }
+
+  /** True if a key has been pressed since the last call, consuming the pending flag - AGI's `have.key` test. */
+  consumeKeyPress(): boolean {
+    const pending = this.keyPending;
+    this.keyPending = false;
+    return pending;
   }
 }
