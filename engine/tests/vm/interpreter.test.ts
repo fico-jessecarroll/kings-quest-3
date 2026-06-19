@@ -78,6 +78,34 @@ describe('Interpreter: if/else branch selection', () => {
     expect(matchCmd).not.toHaveBeenCalled();
     expect(noMatchCmd).toHaveBeenCalledTimes(1);
   });
+
+  it('treats a var-kind symbol in flagTest position as a "!= 0" test', () => {
+    const thenCmd = vi.fn();
+    const elseCmd = vi.fn();
+    const logic = logicOf({
+      type: 'if',
+      test: { type: 'flagTest', name: 'my.var' },
+      then: [call('thenCmd')],
+      else: [call('elseCmd')],
+    });
+    const interpreter = new Interpreter({
+      state,
+      symbols,
+      logics: { 1: logic },
+      commands: { thenCmd, elseCmd },
+    });
+
+    state.setVar(50, 0);
+    interpreter.runLogic(1);
+    expect(thenCmd).not.toHaveBeenCalled();
+    expect(elseCmd).toHaveBeenCalledTimes(1);
+
+    elseCmd.mockClear();
+    state.setVar(50, 3);
+    interpreter.runLogic(1);
+    expect(thenCmd).toHaveBeenCalledTimes(1);
+    expect(elseCmd).not.toHaveBeenCalled();
+  });
 });
 
 describe('Interpreter: command dispatch', () => {
@@ -118,6 +146,50 @@ describe('Interpreter: command dispatch', () => {
     expect(() => interpreter.runLogic(1)).not.toThrow();
     expect(logger).toHaveBeenCalledTimes(1);
     expect(logger.mock.calls[0][0]).toContain('mystery.cmd');
+  });
+});
+
+describe('Interpreter: error hardening', () => {
+  it('a statement that throws during execution is swallowed, logged once, and execution continues', () => {
+    const logger = vi.fn();
+    const after = vi.fn();
+    // "unset.var" has no symbol table entry, so resolveVarIndex() throws.
+    const logic = logicOf(
+      { type: 'assign', target: 'unset.var', op: '=', value: { kind: 'number', value: 1 } },
+      { type: 'assign', target: 'unset.var', op: '=', value: { kind: 'number', value: 1 } },
+      call('after')
+    );
+    const interpreter = new Interpreter({ state: new VmState(), logics: { 1: logic }, commands: { after }, logger });
+
+    expect(() => interpreter.runLogic(1)).not.toThrow();
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(logger.mock.calls[0][0]).toContain('unset.var');
+  });
+
+  it('an error thrown evaluating jumpIfFalse\'s test defaults the branch to not-taken', () => {
+    const logger = vi.fn();
+    const thenCmd = vi.fn();
+    const elseCmd = vi.fn();
+    // "unset.var" has no symbol table entry, so resolveNumericOperand() throws.
+    const logic = logicOf({
+      type: 'if',
+      test: { type: 'comparison', op: '==', left: { kind: 'symbol', name: 'unset.var' }, right: { kind: 'number', value: 0 } },
+      then: [call('thenCmd')],
+      else: [call('elseCmd')],
+    });
+    const interpreter = new Interpreter({
+      state: new VmState(),
+      logics: { 1: logic },
+      commands: { thenCmd, elseCmd },
+      logger,
+    });
+
+    expect(() => interpreter.runLogic(1)).not.toThrow();
+    expect(thenCmd).not.toHaveBeenCalled();
+    expect(elseCmd).toHaveBeenCalledTimes(1);
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(logger.mock.calls[0][0]).toContain('unset.var');
   });
 });
 
