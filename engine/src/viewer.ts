@@ -12,8 +12,9 @@ import { SoundController } from './vm/soundController';
 import type { CallNode, Logic } from './logic/ir';
 import { renderFrame } from './render/frame';
 import { clampSelection, getCarriedItems, itemAtIndex } from './render/inventory';
-import { drawMenuBar } from './render/text';
+import { drawMenuBar, drawMenuDropdown, layoutMenuBarSegments } from './render/text';
 import { sizeScreenCanvas } from './render/screen';
+import { MenuUi } from './input/menu-ui';
 
 // AGI resource numbers are a single byte (0-255); probing the whole range
 // over fetch and keeping only the ones that resolve is simpler and more
@@ -266,15 +267,33 @@ const RENDER_DEMO_MESSAGES: Record<number, string> = {
   1: "Welcome to the placeholder renderer! This long line exercises text.ts's word wrap inside a print() message window.",
   2: 'A shorter print.at() window, anchored at a specific row and column.',
   3: 'HP: 10',
+  10: 'File',
+  11: 'Action',
+  20: 'Save Game',
+  21: 'Restore Game',
+  22: 'Quit',
+  30: 'Look',
+  31: 'Inventory',
 };
+
+// Controller numbers the demo menu's items dispatch on selection, mirroring
+// the constants a real logic would define in SRC/GAMEDEFS.H.
+const MENU_DEMO_CONTROLLER = { saveGame: 100, restoreGame: 101, quit: 102, look: 110, inventory: 111 };
 
 /**
  * Exercises screen.ts/sprites.ts/text.ts together against a real decoded
  * PIC: blits the background, draws placeholder priority-coloured boxes for
  * ego and two animated objects (no VIEW assets exist yet), and lets the
- * status line/message windows/menu bar be toggled on demand. This is the
- * manual smoke test called out in the screen-renderer story, since none of
- * the canvas drawing itself is unit tested.
+ * status line/message windows be toggled on demand. This is the manual
+ * smoke test called out in the screen-renderer story, since none of the
+ * canvas drawing itself is unit tested.
+ *
+ * Also builds a sample File/Action menu through the same
+ * set.menu/set.menu.item/submit.menu calls game logic would make, and drives
+ * it with `MenuUi` end-to-end: F10 opens/closes the bar, arrow keys
+ * navigate, Enter dispatches the selected item's controller (logged below
+ * the canvas), Escape closes - exercising the real interactive menu system,
+ * not just the static drawMenuBar/drawMenuDropdown primitives.
  */
 async function setupRenderDemo(): Promise<void> {
   const canvas = document.getElementById('render-canvas') as HTMLCanvasElement | null;
@@ -311,12 +330,31 @@ async function setupRenderDemo(): Promise<void> {
   state.setPriority(1, 6); // fixed priority, far away
   state.setPosition(2, 120, 100); // automatic priority, mid-screen
 
+  // Build the demo menu the same way game logic would via set.menu/
+  // set.menu.item/submit.menu, then hand it to MenuUi exactly as a real
+  // input layer would.
+  state.addMenu(10); // File
+  state.addMenuItem(20, MENU_DEMO_CONTROLLER.saveGame);
+  state.addMenuItem(21, MENU_DEMO_CONTROLLER.restoreGame);
+  state.addMenuItem(22, MENU_DEMO_CONTROLLER.quit);
+  state.addMenu(11); // Action
+  state.addMenuItem(30, MENU_DEMO_CONTROLLER.look);
+  state.addMenuItem(31, MENU_DEMO_CONTROLLER.inventory);
+  state.setItemEnabled(MENU_DEMO_CONTROLLER.inventory, false); // demonstrates a disabled item
+  state.submitMenu();
+
+  const menuLog = document.getElementById('render-menu-log');
+  const menuUi = new MenuUi({
+    state,
+    resolveMessage: (n) => RENDER_DEMO_MESSAGES[n],
+    onChange: redraw,
+  });
+
   // Carry a couple of inventory items so the status()/show.obj() demo
   // buttons below have something real to list and pick from.
   state.takeObject(1); // Chicken Feather*
   state.takeObject(2); // Cat Hair*
 
-  let menuOpen = false;
   let selectionIndex = 0;
 
   function redraw(): void {
@@ -327,9 +365,17 @@ async function setupRenderDemo(): Promise<void> {
       objects: objectTable.objects,
       inventorySelection: selectionIndex,
     });
-    if (menuOpen) {
-      drawMenuBar(ctx, ['File', 'Game', 'Sound', 'Speed']);
+    if (!menuUi.isOpen()) {
+      return;
     }
+    const menus = menuUi.getMenus();
+    const titles = menus.map((menu) => menu.label);
+    drawMenuBar(ctx, titles, menuUi.getMenuIndex());
+    const segment = layoutMenuBarSegments(titles)[menuUi.getMenuIndex()];
+    drawMenuDropdown(ctx, menus[menuUi.getMenuIndex()].items, {
+      col: segment?.col ?? 0,
+      selectedIndex: menuUi.getItemIndex(),
+    });
   }
 
   document.getElementById('render-print')?.addEventListener('click', () => {
@@ -344,9 +390,45 @@ async function setupRenderDemo(): Promise<void> {
     state.setDisplay({ kind: 'display', message: 3, row: 24, col: 2 });
     redraw();
   });
-  document.getElementById('render-menu')?.addEventListener('click', () => {
-    menuOpen = !menuOpen;
-    redraw();
+  document.getElementById('render-menu')?.addEventListener('click', () => menuUi.toggle());
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'F10') {
+      menuUi.toggle();
+      event.preventDefault();
+      return;
+    }
+    if (!menuUi.isOpen()) {
+      return;
+    }
+    switch (event.key) {
+      case 'ArrowLeft':
+        menuUi.moveMenu(-1);
+        break;
+      case 'ArrowRight':
+        menuUi.moveMenu(1);
+        break;
+      case 'ArrowUp':
+        menuUi.moveItem(-1);
+        break;
+      case 'ArrowDown':
+        menuUi.moveItem(1);
+        break;
+      case 'Enter': {
+        const before = menuUi.getMenus()[menuUi.getMenuIndex()]?.items[menuUi.getItemIndex()];
+        menuUi.selectCurrent();
+        if (before?.enabled && menuLog) {
+          menuLog.textContent = `Selected "${before.label}" -> controller ${before.controller}`;
+        }
+        break;
+      }
+      case 'Escape':
+        menuUi.close();
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
   });
   document.getElementById('render-inventory')?.addEventListener('click', () => {
     const items = getCarriedItems(objectTable.objects, state);
@@ -376,7 +458,7 @@ async function setupRenderDemo(): Promise<void> {
   redraw();
   setStatus(
     'render-status',
-    'Rendered PIC.1 with placeholder sprites. Use the buttons above to exercise text.ts, plus status()/show.obj() carrying the Chicken Feather and Cat Hair.',
+    'Rendered PIC.1 with placeholder sprites. Use the buttons above to exercise text.ts, F10 for the interactive File/Action menu, and status()/show.obj() carrying the Chicken Feather and Cat Hair.',
   );
 }
 

@@ -416,6 +416,10 @@ export function createCommands(options: CommandsOptions): Record<string, Command
       ctx.state.setItemEnabled(args[0], false);
     },
 
+    'submit.menu': (ctx) => {
+      ctx.state.submitMenu();
+    },
+
     'script.size': (ctx) => {
       const args = requireNumbers(ctx, 'script.size', 1);
       if (!args) return;
@@ -523,7 +527,12 @@ export function createCommands(options: CommandsOptions): Record<string, Command
 
     // Debug/system commands with no equivalent in this engine (joystick,
     // memory/trace display) - registered as no-ops so they don't spam
-    // "unimplemented command" warnings.
+    // "unimplemented command" warnings. `menu.input`/`echo.line`/
+    // `cancel.line` do have a real browser-side counterpart (the
+    // interactive menu bar - src/input/menu-ui.ts, wired up in src/main.ts/
+    // src/viewer.ts - and the text-entry line in src/input/parser-ui.ts),
+    // but those are driven directly by the input layer rather than through
+    // command dispatch, so the command itself stays a no-op here.
     log: () => {},
     quit: () => {},
     version: () => {},
@@ -531,7 +540,6 @@ export function createCommands(options: CommandsOptions): Record<string, Command
     'restart.game': () => {},
     'init.joy': () => {},
     'menu.input': () => {},
-    'submit.menu': () => {},
     'echo.line': () => {},
     'cancel.line': () => {},
     'show.mem': () => {},

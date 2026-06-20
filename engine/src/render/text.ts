@@ -154,10 +154,82 @@ export function formatMenuBar(items: string[]): string {
   return items.join('  ');
 }
 
-/** Draws a basic menu bar (row 0, replacing the status line while a menu is open). */
-export function drawMenuBar(ctx: CanvasRenderingContext2D, items: string[]): void {
+export interface MenuBarSegment {
+  label: string;
+  /** Character column where this title starts, in the same left-to-right "two spaces between titles" layout {@link formatMenuBar} produces. */
+  col: number;
+  width: number;
+}
+
+/** Computes each top-level menu title's column offset within the bar - used to anchor an open menu's dropdown under the right title. */
+export function layoutMenuBarSegments(titles: string[]): MenuBarSegment[] {
+  const segments: MenuBarSegment[] = [];
+  let col = 0;
+  for (const label of titles) {
+    segments.push({ label, col, width: label.length });
+    col += label.length + 2;
+  }
+  return segments;
+}
+
+/** Draws a basic menu bar (row 0, replacing the status line while a menu is open), inverse-highlighting `activeIndex`'s title if given. */
+export function drawMenuBar(ctx: CanvasRenderingContext2D, items: string[], activeIndex: number | null = null): void {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, GRID_COLS * CHAR_WIDTH, CHAR_HEIGHT);
   setTextStyle(ctx, '#000000');
   ctx.fillText(formatMenuBar(items), CHAR_WIDTH / 2, 0);
+
+  if (activeIndex === null) {
+    return;
+  }
+  const segment = layoutMenuBarSegments(items)[activeIndex];
+  if (!segment) {
+    return;
+  }
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(segment.col * CHAR_WIDTH, 0, segment.width * CHAR_WIDTH, CHAR_HEIGHT);
+  setTextStyle(ctx, '#ffffff');
+  ctx.fillText(segment.label, segment.col * CHAR_WIDTH, 0);
+}
+
+export interface MenuDropdownItem {
+  label: string;
+  enabled: boolean;
+}
+
+/** Draws an open menu's item list as a window box anchored just below the bar, inverse-highlighting `selectedIndex` and dimming disabled items. */
+export function drawMenuDropdown(
+  ctx: CanvasRenderingContext2D,
+  items: MenuDropdownItem[],
+  options: { col: number; selectedIndex: number }
+): void {
+  const box = layoutWindowBox(
+    items.map((item) => item.label),
+    { col: options.col, row: 1 }
+  );
+  const rect = cellRect(box);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1);
+
+  const textLeft = rect.x + BOX_MARGIN * CHAR_WIDTH;
+  const textTop = rect.y + (BOX_MARGIN / 2) * CHAR_HEIGHT;
+  const rowWidth = rect.width - BOX_MARGIN * CHAR_WIDTH;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const rowTop = textTop + i * CHAR_HEIGHT;
+
+    if (i === options.selectedIndex) {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(textLeft, rowTop, rowWidth, CHAR_HEIGHT);
+      setTextStyle(ctx, '#ffffff');
+    } else {
+      setTextStyle(ctx, item.enabled ? '#000000' : '#999999');
+    }
+    ctx.fillText(item.label, textLeft, rowTop);
+  }
 }
