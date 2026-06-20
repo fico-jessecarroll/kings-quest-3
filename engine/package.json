@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:logic": "tsx tools/compile-logic.ts",
+    "discover-gaps": "tsx tools/discover-gaps.ts",
     "test": "vitest run"
   },
   "devDependencies": {
