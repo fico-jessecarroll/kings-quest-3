@@ -434,6 +434,52 @@ describe('VmState loaded views', () => {
   });
 });
 
+describe('VmState serialize/restore', () => {
+  it('round-trips flags, vars (current room/score included), and inventory positions', () => {
+    const state = new VmState();
+    state.setFlag(10, true);
+    state.setVar(50, 123);
+    state.setCurrentRoom(12);
+    state.setScore(7);
+    state.setObjectRoom(3, 12);
+    state.takeObject(4);
+
+    const snapshot = state.serialize();
+
+    const restored = new VmState();
+    restored.restore(snapshot);
+
+    expect(restored.getFlag(10)).toBe(true);
+    expect(restored.getVar(50)).toBe(123);
+    expect(restored.getCurrentRoom()).toBe(12);
+    expect(restored.getScore()).toBe(7);
+    expect(restored.getObjectRoom(3)).toBe(12);
+    expect(restored.isCarried(4)).toBe(true);
+  });
+
+  it('restore replaces inventory positions rather than merging with whatever was already there', () => {
+    const state = new VmState();
+    state.setObjectRoom(9, 50);
+    const snapshot = state.serialize();
+
+    const other = new VmState();
+    other.setObjectRoom(20, 60);
+    other.restore(snapshot);
+
+    expect(other.getObjectRoom(9)).toBe(50);
+    expect(other.getObjectRoom(20)).toBe(0);
+  });
+
+  it('mutating the state after serialize does not affect the snapshot', () => {
+    const state = new VmState();
+    state.setVar(50, 1);
+    const snapshot = state.serialize();
+    state.setVar(50, 2);
+
+    expect(snapshot.vars[50]).toBe(1);
+  });
+});
+
 describe('VmState script size', () => {
   it('defaults to 0', () => {
     const state = new VmState();
