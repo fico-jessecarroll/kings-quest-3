@@ -573,7 +573,7 @@ describe('createCommands: set.key and tests.controller', () => {
   });
 });
 
-describe('createCommands: set.menu/set.menu.item/enable.item/disable.item', () => {
+describe('createCommands: set.menu/set.menu.item/enable.item/disable.item/submit.menu', () => {
   it('builds up a menu registry', () => {
     const state = new VmState();
     const commands = createCommands({ loadPictureResource: () => undefined });
@@ -586,6 +586,15 @@ describe('createCommands: set.menu/set.menu.item/enable.item/disable.item', () =
 
     commands['enable.item'](ctx(state, 5));
     expect(state.getMenus()[0].items[0].enabled).toBe(true);
+  });
+
+  it('submit.menu finalizes the menu structure', () => {
+    const state = new VmState();
+    const commands = createCommands({ loadPictureResource: () => undefined });
+
+    expect(state.isMenuSubmitted()).toBe(false);
+    commands['submit.menu'](ctx(state));
+    expect(state.isMenuSubmitted()).toBe(true);
   });
 });
 
@@ -747,7 +756,6 @@ describe('createCommands: debug/system no-ops', () => {
       'restore.game',
       'init.joy',
       'menu.input',
-      'submit.menu',
       'echo.line',
       'cancel.line',
       'show.mem',

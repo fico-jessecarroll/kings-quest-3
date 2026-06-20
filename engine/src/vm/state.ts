@@ -161,6 +161,7 @@ export class VmState {
   private readonly keyMappingsByScan = new Map<number, number>();
   private readonly activeControllers = new Set<number>();
   private readonly menus: Menu[] = [];
+  private menuSubmitted = false;
   private readonly loadedViews = new Set<number>();
   private scriptSize = 0;
   private screenMode: ScreenMode = 'graphics';
@@ -426,6 +427,38 @@ export class VmState {
 
   getMenus(): readonly Menu[] {
     return this.menus;
+  }
+
+  /** Finalizes the menu structure built via `set.menu`/`set.menu.item` (`submit.menu`); real AGI doesn't make the menu bar interactive until this has run. */
+  submitMenu(): void {
+    this.menuSubmitted = true;
+  }
+
+  isMenuSubmitted(): boolean {
+    return this.menuSubmitted;
+  }
+
+  /**
+   * Dispatches a menu-item selection - the controller-event counterpart of
+   * the player picking an item from the interactive menu bar. Activates that
+   * item's controller (so game logic's `controller(c.xxx)` check fires on the
+   * next cycle, per AGI's `menu.input()` convention) and reports whether the
+   * dispatch actually happened: an unknown controller or a disabled item is a
+   * no-op, returning false.
+   */
+  selectMenuItem(controller: number): boolean {
+    for (const menu of this.menus) {
+      for (const item of menu.items) {
+        if (item.controller === controller) {
+          if (!item.enabled) {
+            return false;
+          }
+          this.setControllerActive(controller, true);
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /** Resource numbers loaded via `load.view`/`load.view.f`. There's no VIEW decoder yet, so this just tracks which numbers are "loaded" for `discard.view` and tests to observe. */

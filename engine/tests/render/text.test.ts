@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GRID_COLS, GRID_ROWS } from '../../src/render/screen';
-import { centeredBox, formatMenuBar, formatStatusLine, layoutWindowBox, wordWrap } from '../../src/render/text';
+import { centeredBox, formatMenuBar, formatStatusLine, layoutMenuBarSegments, layoutWindowBox, wordWrap } from '../../src/render/text';
 
 describe('wordWrap', () => {
   it('keeps a short line on its own', () => {

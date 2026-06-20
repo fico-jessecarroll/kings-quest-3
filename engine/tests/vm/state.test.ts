@@ -419,6 +419,59 @@ describe('VmState menus', () => {
   });
 });
 
+describe('VmState menu submission and selection', () => {
+  it('starts unsubmitted', () => {
+    const state = new VmState();
+    expect(state.isMenuSubmitted()).toBe(false);
+  });
+
+  it('submitMenu marks the menu structure finalized', () => {
+    const state = new VmState();
+    state.submitMenu();
+    expect(state.isMenuSubmitted()).toBe(true);
+  });
+
+  it('selectMenuItem activates the controller for an enabled item and reports success', () => {
+    const state = new VmState();
+    state.addMenu(121);
+    state.addMenuItem(122, 3); // c.save
+
+    expect(state.selectMenuItem(3)).toBe(true);
+    expect(state.isControllerActive(3)).toBe(true);
+  });
+
+  it('selectMenuItem leaves a disabled item inactive and reports failure', () => {
+    const state = new VmState();
+    state.addMenu(121);
+    state.addMenuItem(122, 3);
+    state.setItemEnabled(3, false);
+
+    expect(state.selectMenuItem(3)).toBe(false);
+    expect(state.isControllerActive(3)).toBe(false);
+  });
+
+  it('selectMenuItem ignores a controller not present in any menu', () => {
+    const state = new VmState();
+    state.addMenu(121);
+    state.addMenuItem(122, 3);
+
+    expect(state.selectMenuItem(99)).toBe(false);
+    expect(state.isControllerActive(99)).toBe(false);
+  });
+
+  it('selectMenuItem finds the item regardless of which menu it sits under', () => {
+    const state = new VmState();
+    state.addMenu(121);
+    state.addMenuItem(122, 3);
+    state.addMenu(130);
+    state.addMenuItem(131, 10); // c.status
+
+    expect(state.selectMenuItem(10)).toBe(true);
+    expect(state.isControllerActive(10)).toBe(true);
+    expect(state.isControllerActive(3)).toBe(false);
+  });
+});
+
 describe('VmState loaded views', () => {
   it('starts with no views loaded', () => {
     const state = new VmState();
