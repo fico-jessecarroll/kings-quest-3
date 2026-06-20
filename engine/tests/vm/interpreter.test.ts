@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Interpreter, type SymbolTable } from '../../src/vm/interpreter';
+import { Interpreter, MAX_CALL_DEPTH, MAX_OPS_PER_LOGIC, type SymbolTable } from '../../src/vm/interpreter';
 import { VmState } from '../../src/vm/state';
 import type { CallNode, Logic, Statement } from '../../src/logic/ir';
 
@@ -390,6 +390,23 @@ describe('Interpreter: call/load.logics', () => {
     expect(logger.mock.calls[0][0]).toContain('99');
   });
 
+  it('call() auto-loads a not-yet-resident logic via the configured loader, with no prior load.logics() call', () => {
+    const loadedCmd = vi.fn();
+    const loadedLogic = logicOf(call('loadedCmd'));
+    const logicLoader = vi.fn((n: number) => (n === 5 ? loadedLogic : undefined));
+    const caller = logicOf(call('call', [{ kind: 'number', value: 5 }]));
+    const interpreter = new Interpreter({
+      state: new VmState(),
+      logics: { 1: caller },
+      commands: { loadedCmd },
+      logicLoader,
+    });
+
+    interpreter.runLogic(1);
+    expect(logicLoader).toHaveBeenCalledWith(5);
+    expect(loadedCmd).toHaveBeenCalledTimes(1);
+  });
+
   it('calling a missing logic number logs once and does not crash', () => {
     const logger = vi.fn();
     const caller = logicOf(call('call', [{ kind: 'number', value: 42 }]));
@@ -611,5 +628,31 @@ describe('Interpreter: set.scan.start/reset.scan.start', () => {
 
     interpreter.runLogic(1);
     expect(cmdB).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Interpreter: runaway-execution guards', () => {
+  it('aborts a logic stuck in an infinite goto busy-wait loop instead of hanging, logging once', () => {
+    const spin = vi.fn();
+    const logger = vi.fn();
+    const logic = logicOf({ type: 'label', name: 'loop' }, call('spin'), { type: 'goto', label: 'loop' });
+    const interpreter = new Interpreter({ state: new VmState(), logics: { 1: logic }, commands: { spin }, logger });
+
+    expect(() => interpreter.runLogic(1)).not.toThrow();
+    expect(spin.mock.calls.length).toBeGreaterThan(MAX_OPS_PER_LOGIC / 2 - 1);
+    expect(spin.mock.calls.length).toBeLessThanOrEqual(MAX_OPS_PER_LOGIC);
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(logger.mock.calls[0][0]).toContain(`exceeded ${MAX_OPS_PER_LOGIC}`);
+  });
+
+  it('aborts an infinite call() cycle between two logics instead of overflowing the call stack, logging once', () => {
+    const logger = vi.fn();
+    const a = logicOf(call('call', [{ kind: 'number', value: 2 }]));
+    const b = logicOf(call('call', [{ kind: 'number', value: 1 }]));
+    const interpreter = new Interpreter({ state: new VmState(), logics: { 1: a, 2: b }, logger });
+
+    expect(() => interpreter.runLogic(1)).not.toThrow();
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(logger.mock.calls[0][0]).toContain(`exceeded ${MAX_CALL_DEPTH}`);
   });
 });
