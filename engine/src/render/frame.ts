@@ -4,8 +4,10 @@
 // three - which is what room/main integration and the browser smoke test
 // call into.
 
+import type { AgiObject } from '../resources/object';
 import { decodePic } from '../resources/pic';
 import type { VmState } from '../vm/state';
+import { drawInventoryScreen, drawObjectView, getCarriedItems } from './inventory';
 import { clearScreen, drawVisualBuffer } from './screen';
 import { collectSprites, drawSprites, EGO_OBJECT_NUMBER } from './sprites';
 import { drawDisplay, drawMessageWindow, drawPrintAt, drawStatusLine, formatStatusLine } from './text';
@@ -17,6 +19,10 @@ export interface RenderFrameOptions {
   spriteObjectNumbers?: number[];
   /** Resolves an AGI %message number to its text, for `print`/`print.at`/`display` events. */
   resolveMessage?: (messageNumber: number) => string | undefined;
+  /** The decoded OBJECT table's entries, used to list carried items on the `status()` screen and resolve a `show.obj` object number to its name. */
+  objects?: readonly AgiObject[];
+  /** The item currently highlighted on the `status()` screen (e.g. via arrow keys), for the "look at object" picker. Null/omitted draws the list with no highlight. */
+  inventorySelection?: number | null;
 }
 
 /**
@@ -58,12 +64,24 @@ export function renderFrame(ctx: CanvasRenderingContext2D, state: VmState, optio
       case 'display':
         drawDisplay(ctx, options.resolveMessage?.(display.message) ?? `(message ${display.message})`, display.row, display.col);
         break;
-      case 'show.obj':
-      case 'status':
+      case 'status': {
+        const items = options.objects ? getCarriedItems(options.objects, state) : [];
+        drawInventoryScreen(ctx, items, options.inventorySelection ?? null);
+        break;
+      }
+      case 'show.obj': {
+        const item = options.objects?.find((object) => object.id === display.object) ?? {
+          id: display.object,
+          name: `object ${display.object}`,
+          startRoom: 0,
+        };
+        drawObjectView(ctx, item);
+        break;
+      }
       case 'obj.status':
       case 'get.string':
       case 'get.num':
-        // Not yet rendered: no inventory-screen, "look at object", or text-prompt UI exists yet.
+        // Not yet rendered: no debug obj.status or text-prompt UI exists yet.
         break;
     }
   }
