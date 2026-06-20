@@ -13,6 +13,7 @@
 import { decodePic, DEFAULT_PRIORITY_COLOR, DEFAULT_VISUAL_COLOR } from '../resources/pic';
 import type { CommandContext, CommandImpl, TestImpl } from './interpreter';
 import { wrapByte } from './interpreter';
+import { DEFAULT_SAVE_KEY, restoreGame, saveGame, type SaveStorage } from './save';
 
 export interface CommandsOptions {
   /** Resolves a PICTURE resource number to its raw (undecoded) bytes, or undefined if not found. */
@@ -21,6 +22,10 @@ export interface CommandsOptions {
   getMessage?: (messageNumber: number) => string | undefined;
   /** Source of randomness for `random`; defaults to {@link Math.random}. Inject a fake for deterministic tests. */
   random?: () => number;
+  /** Backing store for `save.game`/`restore.game`. Defaults to `localStorage` where available (browsers); the commands become no-ops if neither is provided, e.g. under Node's test environment. */
+  storage?: SaveStorage;
+  /** Key `save.game`/`restore.game` read/write under in `storage`. Defaults to {@link DEFAULT_SAVE_KEY}. */
+  saveKey?: string;
   /** Receives one line per first-seen problem (bad args, missing resource). Defaults to console.warn. */
   logger?: (message: string) => void;
 }
@@ -34,6 +39,8 @@ export function createCommands(options: CommandsOptions): Record<string, Command
   const logger = options.logger ?? ((message: string) => console.warn(message));
   const random = options.random ?? Math.random;
   const getMessage = options.getMessage ?? ((messageNumber: number) => String(messageNumber));
+  const storage = options.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage);
+  const saveKey = options.saveKey ?? DEFAULT_SAVE_KEY;
   const loggedOnce = new Set<string>();
 
   function logOnce(key: string, message: string): void {
@@ -500,10 +507,28 @@ export function createCommands(options: CommandsOptions): Record<string, Command
       ctx.state.setShakeDuration(args[0]);
     },
 
-    // Debug/system commands with no equivalent in this engine (no save
-    // system, joystick, or memory/trace display) - registered as no-ops so
-    // they don't spam "unimplemented command" warnings. `menu.input`/
-    // `echo.line`/`cancel.line` do have a real browser-side counterpart (the
+    'save.game': (ctx) => {
+      if (!storage) {
+        logOnce('save.game:no-storage', 'save.game(): no storage available - nothing was saved');
+        return;
+      }
+      saveGame(storage, ctx.state, saveKey);
+    },
+
+    'restore.game': (ctx) => {
+      if (!storage) {
+        logOnce('restore.game:no-storage', 'restore.game(): no storage available - nothing was restored');
+        return;
+      }
+      if (!restoreGame(storage, ctx.state, saveKey)) {
+        logOnce('restore.game:bad-data', 'restore.game(): no valid save data found - nothing was restored');
+      }
+    },
+
+    // Debug/system commands with no equivalent in this engine (joystick,
+    // memory/trace display) - registered as no-ops so they don't spam
+    // "unimplemented command" warnings. `menu.input`/`echo.line`/
+    // `cancel.line` do have a real browser-side counterpart (the
     // interactive menu bar - src/input/menu-ui.ts, wired up in src/main.ts/
     // src/viewer.ts - and the text-entry line in src/input/parser-ui.ts),
     // but those are driven directly by the input layer rather than through
@@ -513,8 +538,6 @@ export function createCommands(options: CommandsOptions): Record<string, Command
     version: () => {},
     pause: () => {},
     'restart.game': () => {},
-    'save.game': () => {},
-    'restore.game': () => {},
     'init.joy': () => {},
     'menu.input': () => {},
     'echo.line': () => {},

@@ -49,6 +49,31 @@ export function wrapByte(value: number): number {
   return ((value % 256) + 256) % 256;
 }
 
+/**
+ * Ceiling on ops executed within a single {@link Interpreter.runLogic} call.
+ * Real AGI's keyboard/timer state updates via hardware interrupt while a
+ * logic's `goto`-loop busy-waits (e.g. a debug screen's `if (!have.key())
+ * goto check.kb;`), so the loop exits once a key arrives asynchronously
+ * mid-spin. This interpreter runs a logic to completion synchronously with
+ * no interleaved input, so that same pattern would spin forever here;
+ * bailing out past a generous op budget turns that into a logged no-op
+ * instead of hanging the host.
+ */
+export const MAX_OPS_PER_LOGIC = 200_000;
+
+/**
+ * Ceiling on nested {@link Interpreter.runLogic} invocations (i.e. `call()`
+ * depth). Unlike {@link MAX_OPS_PER_LOGIC} - which only bounds the flat op
+ * loop *within* one logic - a logic that calls another logic that calls back
+ * into the first (e.g. a "current spell" var that defaults to 0 and ends up
+ * pointing at logic 0, which itself calls back into the current room) grows
+ * the JS call stack one frame per `call()` with no per-logic loop to budget,
+ * and would otherwise only stop via an engine-specific stack-overflow error
+ * at an unpredictable depth. Bailing out past a generous, deterministic
+ * depth turns that into the same logged no-op the other guards produce.
+ */
+export const MAX_CALL_DEPTH = 200;
+
 /** Appends statements to `ops` in document order, recording label positions and goto targets to patch once the full list is known. */
 function flatten(
   statements: Statement[],
@@ -127,6 +152,7 @@ export class Interpreter {
   private readonly scanStart = new Map<number, number>();
   private currentLogicNumber: number | null = null;
   private currentPc = 0;
+  private callDepth = 0;
 
   constructor(options: InterpreterOptions) {
     this.state = options.state;
@@ -253,18 +279,40 @@ export class Interpreter {
     this.runLogic(this.state.getCurrentRoom());
   }
 
+  /** Resolves logic `number` to its already-loaded {@link Logic}, falling back to `logicLoader` (the same on-demand resolver `load.logics` uses) since real AGI's `call()` transparently loads a non-resident logic rather than requiring `load.logics` first. */
+  private resolveLogic(number: number): Logic | undefined {
+    const loaded = this.logics.get(number);
+    if (loaded) {
+      return loaded;
+    }
+    const fetched = this.logicLoader?.(number);
+    if (fetched) {
+      this.logics.set(number, fetched);
+    }
+    return fetched;
+  }
+
   runLogic(number: number): void {
-    const logic = this.logics.get(number);
+    const logic = this.resolveLogic(number);
     if (!logic) {
       this.logOnce(`logic:${number}`, `logic ${number} is not loaded`);
       return;
     }
+    if (this.callDepth >= MAX_CALL_DEPTH) {
+      this.logOnce(
+        'call:depth-limit',
+        `[interpreter] call() recursion exceeded ${MAX_CALL_DEPTH} levels deep (likely an infinite cycle of logics calling each other) - aborting this call`
+      );
+      return;
+    }
     const previousLogicNumber = this.currentLogicNumber;
     this.currentLogicNumber = number;
+    this.callDepth++;
     try {
       this.runProgram(this.getProgram(logic), this.scanStart.get(number) ?? 0);
     } finally {
       this.currentLogicNumber = previousLogicNumber;
+      this.callDepth--;
     }
   }
 
@@ -279,8 +327,16 @@ export class Interpreter {
 
   private runProgram(ops: Op[], startPc = 0): void {
     let pc = startPc;
+    let steps = 0;
     while (pc < ops.length) {
       if (this.roomChangeRequested) {
+        return;
+      }
+      if (++steps > MAX_OPS_PER_LOGIC) {
+        this.logOnce(
+          `logic:${this.currentLogicNumber}:step-limit`,
+          `[interpreter] logic ${this.currentLogicNumber} exceeded ${MAX_OPS_PER_LOGIC} ops in one cycle (likely a goto-loop busy-waiting on input/timing this interpreter can't satisfy synchronously) - aborting its turn`
+        );
         return;
       }
       const op = ops[pc];

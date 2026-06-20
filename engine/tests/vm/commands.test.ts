@@ -16,6 +16,18 @@ function ctx(state: VmState, ...args: CommandContext['args']): CommandContext {
   return { state, args };
 }
 
+/** Minimal in-memory stand-in for `localStorage` (the test environment is Node, which has no DOM globals). */
+function createFakeStorage(initial: Record<string, string> = {}): { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void; data: Record<string, string> } {
+  const data: Record<string, string> = { ...initial };
+  return {
+    data,
+    getItem: (key) => (key in data ? data[key] : null),
+    setItem: (key, value) => {
+      data[key] = value;
+    },
+  };
+}
+
 describe('createCommands: load.pic/draw.pic/show.pic/discard.pic', () => {
   it('load.pic records the picture number without touching the drawn buffers', () => {
     const state = new VmState();
@@ -752,8 +764,6 @@ describe('createCommands: debug/system no-ops', () => {
       'version',
       'pause',
       'restart.game',
-      'save.game',
-      'restore.game',
       'init.joy',
       'menu.input',
       'echo.line',
@@ -771,6 +781,109 @@ describe('createCommands: debug/system no-ops', () => {
       expect(commands[name]).toBeTypeOf('function');
       expect(() => commands[name](ctx(state, 1, 2, 3))).not.toThrow();
     }
+  });
+});
+
+describe('createCommands: save.game/restore.game', () => {
+  it('round-trips flags, vars, current room, score, and inventory through the injected storage', () => {
+    const storage = createFakeStorage();
+    const commands = createCommands({ loadPictureResource: () => undefined, storage });
+
+    const saved = new VmState();
+    saved.setFlag(10, true);
+    saved.setVar(50, 123);
+    saved.setCurrentRoom(12);
+    saved.setScore(7);
+    saved.setObjectRoom(3, 12);
+    saved.takeObject(4);
+
+    commands['save.game'](ctx(saved));
+    expect(storage.data['kq3-save']).toBeDefined();
+
+    const restored = new VmState();
+    commands['restore.game'](ctx(restored));
+
+    expect(restored.getFlag(10)).toBe(true);
+    expect(restored.getVar(50)).toBe(123);
+    expect(restored.getCurrentRoom()).toBe(12);
+    expect(restored.getScore()).toBe(7);
+    expect(restored.getObjectRoom(3)).toBe(12);
+    expect(restored.isCarried(4)).toBe(true);
+  });
+
+  it('restoring into a fresh VM resumes the correct room', () => {
+    const storage = createFakeStorage();
+    const commands = createCommands({ loadPictureResource: () => undefined, storage });
+
+    const saved = new VmState();
+    saved.setCurrentRoom(42);
+    commands['save.game'](ctx(saved));
+
+    const fresh = new VmState();
+    expect(fresh.getCurrentRoom()).toBe(0);
+    commands['restore.game'](ctx(fresh));
+    expect(fresh.getCurrentRoom()).toBe(42);
+  });
+
+  it('restore.game leaves state untouched when nothing has been saved', () => {
+    const storage = createFakeStorage();
+    const commands = createCommands({ loadPictureResource: () => undefined, storage });
+
+    const state = new VmState();
+    state.setCurrentRoom(5);
+    commands['restore.game'](ctx(state));
+
+    expect(state.getCurrentRoom()).toBe(5);
+  });
+
+  it('restore.game leaves state untouched when the save data is corrupt', () => {
+    const storage = createFakeStorage({ 'kq3-save': '{not valid json' });
+    const commands = createCommands({ loadPictureResource: () => undefined, storage });
+
+    const state = new VmState();
+    state.setCurrentRoom(5);
+    commands['restore.game'](ctx(state));
+
+    expect(state.getCurrentRoom()).toBe(5);
+  });
+
+  it('restore.game leaves state untouched when the save data has the wrong shape', () => {
+    const storage = createFakeStorage({ 'kq3-save': JSON.stringify({ flags: [], vars: [], objectRooms: [] }) });
+    const commands = createCommands({ loadPictureResource: () => undefined, storage });
+
+    const state = new VmState();
+    state.setCurrentRoom(5);
+    commands['restore.game'](ctx(state));
+
+    expect(state.getCurrentRoom()).toBe(5);
+  });
+
+  it('save.game/restore.game use a custom saveKey when provided', () => {
+    const storage = createFakeStorage();
+    const commands = createCommands({ loadPictureResource: () => undefined, storage, saveKey: 'slot-2' });
+
+    const saved = new VmState();
+    saved.setCurrentRoom(9);
+    commands['save.game'](ctx(saved));
+    expect(storage.data['slot-2']).toBeDefined();
+    expect(storage.data['kq3-save']).toBeUndefined();
+
+    const restored = new VmState();
+    commands['restore.game'](ctx(restored));
+    expect(restored.getCurrentRoom()).toBe(9);
+  });
+
+  it('are no-ops that warn once when no storage is available', () => {
+    const logger = vi.fn();
+    const commands = createCommands({ loadPictureResource: () => undefined, storage: undefined, logger });
+
+    const state = new VmState();
+    state.setCurrentRoom(5);
+
+    expect(() => commands['save.game'](ctx(state))).not.toThrow();
+    expect(() => commands['restore.game'](ctx(state))).not.toThrow();
+    expect(state.getCurrentRoom()).toBe(5);
+    expect(logger).toHaveBeenCalled();
   });
 });
 

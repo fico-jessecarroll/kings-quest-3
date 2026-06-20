@@ -3,7 +3,7 @@
 // no gameplay logic involved.
 
 import { decodePic, renderToCanvas } from './resources/pic';
-import { decodeObjectFile } from './resources/object';
+import { decodeObjectFile, type ObjectTable } from './resources/object';
 import { decodeWords } from './resources/words';
 import { decodeSound, playSound, type DecodedSound } from './resources/sound';
 import { Interpreter } from './vm/interpreter';
@@ -11,6 +11,7 @@ import { VmState } from './vm/state';
 import { SoundController } from './vm/soundController';
 import type { CallNode, Logic } from './logic/ir';
 import { renderFrame } from './render/frame';
+import { clampSelection, getCarriedItems, itemAtIndex } from './render/inventory';
 import { drawMenuBar, drawMenuDropdown, layoutMenuBarSegments } from './render/text';
 import { sizeScreenCanvas } from './render/screen';
 import { MenuUi } from './input/menu-ui';
@@ -74,16 +75,26 @@ async function loadPics(): Promise<void> {
   setStatus('pic-status', `${decoded} pictures decoded${failed > 0 ? `, ${failed} failed` : ''} (out of ${resources.length} found).`);
 }
 
+// Shared across loadObjects() and setupRenderDemo() so the OBJECT resource
+// is only fetched and decoded once, even though both sections need it.
+let objectTablePromise: Promise<ObjectTable> | null = null;
+function loadObjectTable(): Promise<ObjectTable> {
+  objectTablePromise ??= (async () => {
+    const res = await fetch('/OBJECT');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return decodeObjectFile(bytes);
+  })();
+  return objectTablePromise;
+}
+
 async function loadObjects(): Promise<void> {
   const tbody = document.querySelector('#object-table tbody');
   if (!tbody) return;
 
   setStatus('object-status', 'Loading...');
   try {
-    const res = await fetch('/OBJECT');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    const table = decodeObjectFile(bytes);
+    const table = await loadObjectTable();
 
     for (const obj of table.objects) {
       const row = document.createElement('tr');
@@ -290,12 +301,14 @@ async function setupRenderDemo(): Promise<void> {
 
   setStatus('render-status', 'Loading...');
   let visualBytes: Uint8Array;
+  let objectTable: ObjectTable;
   try {
     const res = await fetch('/PIC/PIC.1');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     visualBytes = new Uint8Array(await res.arrayBuffer());
+    objectTable = await loadObjectTable();
   } catch (err) {
-    setStatus('render-status', `Failed to load PIC.1: ${String(err)}`);
+    setStatus('render-status', `Failed to load PIC.1 or OBJECT: ${String(err)}`);
     console.error(err);
     return;
   }
@@ -337,11 +350,20 @@ async function setupRenderDemo(): Promise<void> {
     onChange: redraw,
   });
 
+  // Carry a couple of inventory items so the status()/show.obj() demo
+  // buttons below have something real to list and pick from.
+  state.takeObject(1); // Chicken Feather*
+  state.takeObject(2); // Cat Hair*
+
+  let selectionIndex = 0;
+
   function redraw(): void {
     if (!ctx) return;
     renderFrame(ctx, state, {
       spriteObjectNumbers: [0, 1, 2],
       resolveMessage: (n) => RENDER_DEMO_MESSAGES[n],
+      objects: objectTable.objects,
+      inventorySelection: selectionIndex,
     });
     if (!menuUi.isOpen()) {
       return;
@@ -408,11 +430,35 @@ async function setupRenderDemo(): Promise<void> {
     }
     event.preventDefault();
   });
+  document.getElementById('render-inventory')?.addEventListener('click', () => {
+    const items = getCarriedItems(objectTable.objects, state);
+    selectionIndex = clampSelection(selectionIndex, items.length);
+    state.setDisplay({ kind: 'status' });
+    redraw();
+  });
+  document.getElementById('render-inventory-prev')?.addEventListener('click', () => {
+    const items = getCarriedItems(objectTable.objects, state);
+    selectionIndex = clampSelection(selectionIndex - 1, items.length);
+    redraw();
+  });
+  document.getElementById('render-inventory-next')?.addEventListener('click', () => {
+    const items = getCarriedItems(objectTable.objects, state);
+    selectionIndex = clampSelection(selectionIndex + 1, items.length);
+    redraw();
+  });
+  document.getElementById('render-show-obj')?.addEventListener('click', () => {
+    const items = getCarriedItems(objectTable.objects, state);
+    const item = itemAtIndex(items, selectionIndex);
+    if (item) {
+      state.setDisplay({ kind: 'show.obj', object: item.id });
+      redraw();
+    }
+  });
 
   redraw();
   setStatus(
     'render-status',
-    'Rendered PIC.1 with placeholder sprites. Use the buttons above to exercise text.ts, or F10 for the interactive File/Action menu.',
+    'Rendered PIC.1 with placeholder sprites. Use the buttons above to exercise text.ts, F10 for the interactive File/Action menu, and status()/show.obj() carrying the Chicken Feather and Cat Hair.',
   );
 }
 
