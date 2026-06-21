@@ -17,12 +17,13 @@ const KEYWORDS = new Set(['if', 'else', 'goto', 'return']);
 const PUNCTUATION = new Set(['(', ')', '{', '}', ',', ';', ':']);
 
 const TWO_CHAR_OPERATORS = new Set(['==', '!=', '&&', '||']);
-// "@" isn't a real AGI operator - it's a typo for "=" that shows up twice in
-// the source (RM99.CG's "debug.1 =@ debug.0", RM100.CG's "work @= 0"), but
-// the lexer just needs to tokenize it; the parser decides what "@=" / "=@"
-// mean. "/" is deliberately not an operator here: the language has no
-// division syntax, and VIEWS.H's "v.ego.sleeping.l/r" view name relies on
-// "/" being part of an identifier rather than splitting it in two.
+// "@" marks AGI's indirect-addressing assignments ("@=" / "=@" - see
+// parser.ts), used in RM99.CG's debug console and RM100.CG's per-room-entry
+// var-reset loop; the lexer just needs to tokenize it, the parser decides
+// which side is indirect. "/" is deliberately not an operator here: the
+// language has no division syntax, and VIEWS.H's "v.ego.sleeping.l/r" view
+// name relies on "/" being part of an identifier rather than splitting it in
+// two.
 const ONE_CHAR_OPERATORS = new Set(['<', '>', '!', '=', '+', '-', '*', '@']);
 
 // AGI identifiers are dot-namespaced (current.status, lgc.error), and a few

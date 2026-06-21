@@ -267,7 +267,7 @@ export function parseLogic(source: string): Logic {
     }
 
     advance();
-    let op: '=' | '+=' | '-=' = '=';
+    let op: '=' | '+=' | '-=' | '@=' | '=@' = '=';
     if (isOperator('+')) {
       advance();
       expectOperator('=');
@@ -277,15 +277,23 @@ export function parseLogic(source: string): Logic {
       expectOperator('=');
       op = '-=';
     } else if (isOperator('@')) {
-      // RM100.CG's "work @= 0" - a typo'd "=", spelled "@=" instead.
+      // RM100.CG's "work @= 0" - AGI's indirect-on-the-left assignment
+      // (lindirectn/lindirectv): vars[work] = 0, not "work = 0". Confirmed
+      // by RM99.CG's debug console: `debug.0 @= debug.1` implements its
+      // "set var [N] to [V]" command, writing into the var *numbered*
+      // debug.0 rather than into debug.0 itself.
       advance();
       expectOperator('=');
-      op = '=';
+      op = '@=';
     } else {
       expectOperator('=');
       if (isOperator('@')) {
-        // RM99.CG's "debug.1 =@ debug.0" - the same typo, spelled "=@".
+        // RM99.CG's "debug.1 =@ debug.0" - the indirect-on-the-right
+        // counterpart (rindirect): debug.1 = vars[debug.0], used by the same
+        // debug console's "show var [N]" command to read the var *numbered*
+        // debug.0.
         advance();
+        op = '=@';
       }
     }
     const value = parseLiteral();

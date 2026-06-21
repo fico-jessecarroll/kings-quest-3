@@ -8,39 +8,42 @@
 // same way a real AGI cel is anchored: x is the left edge, y is the bottom.
 
 import { PICTURE_HEIGHT } from '../resources/pic';
+import { DEFAULT_HORIZON } from '../vm/objects';
 import type { VmState } from '../vm/state';
 import { pictureToCanvasX, pictureToCanvasY, SCALE_X } from './screen';
+
+export { DEFAULT_HORIZON };
 
 /** AGI convention: object/view 0 is always ego. */
 export const EGO_OBJECT_NUMBER = 0;
 
-/** Priorities 0-3 are reserved for picture control lines; only 4-15 are usable drawing bands. */
+/** Priorities 0-3 are reserved for picture control lines; 4-15 are usable as a fixed `set.priority`. */
 export const MIN_PRIORITY = 4;
 export const MAX_PRIORITY = 15;
 
-/** Number of automatic priority bands spread between the horizon and the bottom of the picture. */
-const AUTO_PRIORITY_BANDS = MAX_PRIORITY - MIN_PRIORITY + 1;
-
 /**
- * Default horizon (in picture-buffer y) used for automatic priority when a
- * room hasn't set one. Real rooms call `set.horizon`, but the VM doesn't
- * track that yet (no command/state for it exists in this codebase), so this
- * is a placeholder until that lands.
+ * Automatic (y-based) priority only ever lands in bands 5-14: band 15 is
+ * reserved for objects that explicitly `set.priority(obj, 15)` to force
+ * drawing on top of everything (several rooms do exactly this for ego, e.g.
+ * RM0.CG/RM10.CG "prevent hangups"), which would be pointless if the
+ * automatic calculation could already reach 15 on its own.
  */
-export const DEFAULT_HORIZON = 0;
+const AUTO_PRIORITY_BASE = 5;
+const AUTO_PRIORITY_BANDS = 10;
+export const MAX_AUTO_PRIORITY = AUTO_PRIORITY_BASE + AUTO_PRIORITY_BANDS - 1; // 14
 
 /**
  * AGI's automatic (y-based) priority calculation, used for any object that
- * hasn't been given a fixed priority via `set.priority`: everything above
- * the horizon is priority 4, and the region from the horizon to the bottom
- * of the picture is split evenly into bands 4-15 (closer to the bottom of
- * the screen reads as higher priority, i.e. nearer the viewer).
+ * hasn't been given a fixed priority via `set.priority`: at or above the
+ * horizon is priority 4, and the region from the horizon to the bottom of
+ * the picture is split into 10 bands, 5-14 (closer to the bottom of the
+ * screen reads as higher priority, i.e. nearer the viewer).
  */
 export function autoPriorityForY(y: number, horizon = DEFAULT_HORIZON): number {
   if (y <= horizon) return MIN_PRIORITY;
   const span = Math.max(1, PICTURE_HEIGHT - horizon);
   const band = Math.floor(((y - horizon) * AUTO_PRIORITY_BANDS) / span);
-  return Math.min(MAX_PRIORITY, MIN_PRIORITY + band);
+  return Math.min(MAX_AUTO_PRIORITY, AUTO_PRIORITY_BASE + band);
 }
 
 /** An object's effective priority: its fixed `set.priority` value if any, otherwise the automatic y-based band. */

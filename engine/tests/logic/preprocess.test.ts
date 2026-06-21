@@ -122,23 +122,38 @@ describe('preprocess: comments and macros on synthetic source', () => {
     expect(result.messages[1]).toBe('line one line two, "quoted".');
   });
 
-  it('discards a disabled "#message" and its multi-line quoted body (RM25.MSG-style)', () => {
+  // "%" and "#" are interchangeable directive prefixes in the real source
+  // tree (e.g. RM103.CG "%include"s gamedefs.reh, RM108.CG "#include"s the
+  // same file; GAMEDEFS.REH itself is entirely "#"-prefixed yet defines
+  // flags real rooms set/reset at runtime), not a live/disabled distinction.
+  it('treats a multi-line "#message" the same as "%message" (RM25.MSG-style)', () => {
     const result = preprocessSource(
       '%message 1 "kept"\n' +
         '#message 2\n' +
         '"this whole multi-line string\n' +
-        ' must not leak into the code stream"\n' +
+        ' must also be captured"\n' +
         'set( near.mud);\n',
       SRC
     );
-    expect(result.messages).toEqual({ 1: 'kept' });
+    expect(result.messages).toEqual({ 1: 'kept', 2: 'this whole multi-line string must also be captured' });
     expect(result.source.trim()).toBe('set( near.mud);');
   });
 
-  it('discards a disabled "#message" whose quoted body is on the same line (RM96.CG-style)', () => {
+  it('treats a same-line "#message" the same as "%message" (RM96.CG-style)', () => {
     const result = preprocessSource('#message 1 "increment"\n' + 'set( near.mud);\n', SRC);
-    expect(result.messages).toEqual({});
+    expect(result.messages).toEqual({ 1: 'increment' });
     expect(result.source.trim()).toBe('set( near.mud);');
+  });
+
+  it('treats "#flag"/"#var"/"#define" the same as their "%" form (GAMEDEFS.REH-style)', () => {
+    const result = preprocessSource(
+      '#flag eagleHere 200\n' + '#var snowman.x 170\n' + '#define SNOREDELAY 22\n' + 'set( eagleHere);\n',
+      SRC
+    );
+    expect(result.symbols['eagleHere']).toEqual({ kind: 'flag', value: 200 });
+    expect(result.symbols['snowman.x']).toEqual({ kind: 'var', value: 170 });
+    expect(result.symbols['SNOREDELAY']).toEqual({ kind: 'define', value: 22 });
+    expect(result.source.trim()).toBe('set( eagleHere);');
   });
 });
 

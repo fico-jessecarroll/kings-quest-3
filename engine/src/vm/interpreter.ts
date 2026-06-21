@@ -13,7 +13,7 @@
 
 import type { BoolExpr, CallNode, IncDecStatement, Literal, Logic, AssignStatement, Statement } from '../logic/ir';
 import type { SymbolEntry } from '../logic/preprocess';
-import { VmState } from './state';
+import { ReservedFlag, VmState } from './state';
 
 export type CommandArgValue = number | string;
 
@@ -183,8 +183,7 @@ export class Interpreter {
         this.logOnce('new.room:bad-arg', `new.room(): expected a numeric room, got ${String(room)}`);
         return;
       }
-      this.state.setCurrentRoom(room);
-      this.roomChangeRequested = true;
+      this.enterRoom(room);
     });
 
     this.commands.set('new.room.f', (ctx) => {
@@ -193,8 +192,7 @@ export class Interpreter {
         this.logOnce('new.room.f:bad-arg', `new.room.f(): expected a numeric var index, got ${String(roomVar)}`);
         return;
       }
-      this.state.setCurrentRoom(this.state.getVar(roomVar));
-      this.roomChangeRequested = true;
+      this.enterRoom(this.state.getVar(roomVar));
     });
 
     this.commands.set('call', (ctx) => {
@@ -269,14 +267,43 @@ export class Interpreter {
     this.logics.set(number, logic);
   }
 
-  /** Runs one interpreter tick: logic 0, then the current room's logic - unless `new.room` fired during logic 0, in which case the room logic is deferred to the next tick. */
+  /**
+   * Switches the active room and sets AGI's reserved `init.log` flag (flag
+   * 5 - real AGI reserves flags 0-29 for the interpreter itself), which
+   * every room logic's `if (init.log) { ...one-time setup...; return(); }`
+   * block at the top tests to detect "I was just entered." `runCycle`
+   * clears it again once that first pass has actually run.
+   */
+  private enterRoom(room: number): void {
+    this.state.setCurrentRoom(room);
+    this.state.setFlag(ReservedFlag.InitLogs, true);
+    this.roomChangeRequested = true;
+  }
+
+  /**
+   * Runs one interpreter tick: logic 0, then the current room's logic -
+   * unless `new.room` fired during logic 0 or the room logic itself, in
+   * which case the new room's first pass (with `init.log` still true) is
+   * deferred to the next tick. `have.input` (flag 2, set by the parser when
+   * the player submits a line - see ParserUi) is cleared once this tick has
+   * had a chance to react to it, the same "true for exactly one tick" shape
+   * as `init.log`, so a submitted line isn't reprocessed on every later
+   * tick until the player types another one.
+   */
   runCycle(): void {
     this.roomChangeRequested = false;
-    this.runLogic(0);
-    if (this.roomChangeRequested) {
-      return;
+    try {
+      this.runLogic(0);
+      if (this.roomChangeRequested) {
+        return;
+      }
+      this.runLogic(this.state.getCurrentRoom());
+      if (!this.roomChangeRequested) {
+        this.state.resetFlag(ReservedFlag.InitLogs);
+      }
+    } finally {
+      this.state.resetFlag(ReservedFlag.HaveInput);
     }
-    this.runLogic(this.state.getCurrentRoom());
   }
 
   /** Resolves logic `number` to its already-loaded {@link Logic}, falling back to `logicLoader` (the same on-demand resolver `load.logics` uses) since real AGI's `call()` transparently loads a non-resident logic rather than requiring `load.logics` first. */
@@ -385,6 +412,18 @@ export class Interpreter {
       case 'assign': {
         const index = this.resolveVarIndex(stmt.target);
         const operand = this.resolveNumericOperand(stmt.value);
+        // "@=" (lindirectn/lindirectv) writes through `target` as a pointer:
+        // vars[vars[index]] = operand. "=@" (rindirect) reads through
+        // `value` as a pointer: vars[index] = vars[operand]. Both confirmed
+        // by RM99.CG's debug console (see ir.ts's AssignStatement.op doc).
+        if (stmt.op === '@=') {
+          this.state.setVar(this.state.getVar(index), wrapByte(operand));
+          break;
+        }
+        if (stmt.op === '=@') {
+          this.state.setVar(index, wrapByte(this.state.getVar(operand)));
+          break;
+        }
         const current = this.state.getVar(index);
         const next = stmt.op === '=' ? operand : stmt.op === '+=' ? current + operand : current - operand;
         this.state.setVar(index, wrapByte(next));

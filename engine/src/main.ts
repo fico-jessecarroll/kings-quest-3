@@ -1,19 +1,57 @@
+/**
+ * The real game shell: boots the compiled logic bundle (run `npm run
+ * build:logic` first - see tools/compile-logic.ts) into an Interpreter wired
+ * to every VM/render subsystem this repo has built (state, animated objects,
+ * picture/sprite rendering, sound, the text parser, the menu bar), then
+ * drives it on a fixed-rate timer - AGI's own base cycle rate, before any
+ * `set.speed`-style slowdown - and renders one frame per tick to a canvas.
+ *
+ * Earlier versions of this file only wired keyboard/menu/parser input
+ * straight onto VmState with no Interpreter running at all (no logic ever
+ * executed, so nothing they touched had any effect beyond the DOM debug
+ * readout). This is the first version that actually plays the game.
+ */
+
 import { KeyboardInput } from './input/keyboard';
 import { MenuUi } from './input/menu-ui';
 import { bindParserInputElement, ParserUi } from './input/parser-ui';
+import { decodeObjectFile, type AgiObject } from './resources/object';
 import { decodeWords } from './resources/words';
+import { renderFrame } from './render/frame';
+import { sizeScreenCanvas } from './render/screen';
+import { createCommands, tests as baseTests } from './vm/commands';
+import { createObjectCommands } from './vm/objectCommands';
+import { EGO_OBJECT, ObjectTable } from './vm/objects';
+import { Interpreter, type SymbolTable } from './vm/interpreter';
+import { SoundController } from './vm/soundController';
 import { ReservedVar, VmState } from './vm/state';
 import { InputParser } from './vm/tests';
+import type { GlobalSymbolTables, LogicBundle } from '../tools/compile-logic';
 
-const app = document.querySelector<HTMLDivElement>('#app');
-const state = new VmState();
+/** AGI's base interpreter rate: roughly 20 cycles/sec before `set.speed` skips cycles on top (that menu - RM0.CG's "Normal/Slow/Fast/Fastest" - isn't wired to anything yet; see engine/README.md). */
+const CYCLE_MS = 50;
+const MAX_RESOURCE_ID = 255;
+
+async function fetchResourceRange(dir: string, max: number): Promise<Map<number, Uint8Array>> {
+  const ids = Array.from({ length: max + 1 }, (_, i) => i);
+  const results = await Promise.all(
+    ids.map(async (id): Promise<[number, Uint8Array] | null> => {
+      const res = await fetch(`/${dir}/${dir}.${id}`);
+      if (!res.ok) return null;
+      return [id, new Uint8Array(await res.arrayBuffer())];
+    }),
+  );
+  return new Map(results.filter((r): r is [number, Uint8Array] => r !== null));
+}
 
 function buildShell(): {
   parserInput: HTMLInputElement;
   log: HTMLUListElement;
   debug: HTMLPreElement;
   menuBar: HTMLDivElement;
+  canvas: HTMLCanvasElement;
 } | null {
+  const app = document.querySelector<HTMLDivElement>('#app');
   if (!app) {
     return null;
   }
@@ -24,6 +62,10 @@ function buildShell(): {
 
   const menuBar = document.createElement('div');
   menuBar.id = 'menu-bar';
+
+  const canvas = document.createElement('canvas');
+  canvas.id = 'game-canvas';
+  sizeScreenCanvas(canvas);
 
   const parserInput = document.createElement('input');
   parserInput.type = 'text';
@@ -37,16 +79,11 @@ function buildShell(): {
   const debug = document.createElement('pre');
   debug.id = 'debug-output';
 
-  app.append(title, menuBar, parserInput, log, debug);
-  return { parserInput, log, debug, menuBar };
+  app.append(title, menuBar, canvas, parserInput, log, debug);
+  return { parserInput, log, debug, menuBar, canvas };
 }
 
-/**
- * Renders the menu bar's titles as plain text, plus the open menu's item
- * list if expanded - a DOM stand-in for AGI's bar/dropdown since this shell
- * has no canvas yet (see drawMenuBar/drawMenuDropdown in render/text.ts for
- * the canvas version exercised in src/viewer.ts).
- */
+/** Renders the menu bar's titles as plain text, plus the open menu's item list if expanded - a DOM stand-in for AGI's bar/dropdown since this shell draws the picture/sprites on canvas but hasn't moved the menu chrome there too. */
 function renderMenuBar(menuUi: MenuUi, menuBar: HTMLDivElement): void {
   const menus = menuUi.getMenus();
   if (menus.length === 0) {
@@ -74,36 +111,95 @@ function renderMenuBar(menuUi: MenuUi, menuBar: HTMLDivElement): void {
   menuBar.append(dropdown);
 }
 
-function renderDebug(debug: HTMLPreElement): void {
-  debug.textContent = `ego.dir = ${state.getVar(ReservedVar.EgoDirection)}\ninput enabled = ${state.isInputEnabled()}`;
+function renderDebug(debug: HTMLPreElement, state: VmState, cycles: number): void {
+  debug.textContent =
+    `room = ${state.getCurrentRoom()}\n` +
+    `ego.dir = ${state.getVar(ReservedVar.EgoDirection)}\n` +
+    `input enabled = ${state.isInputEnabled()}\n` +
+    `cycles run = ${cycles}`;
 }
 
-async function setupInput(): Promise<void> {
+async function main(): Promise<void> {
   const shell = buildShell();
   if (!shell) {
     return;
   }
-  const { parserInput, log, debug, menuBar } = shell;
-  renderDebug(debug);
+  const { parserInput, log, debug, menuBar, canvas } = shell;
+  const ctx = canvas.getContext('2d');
 
-  // No Logic is loaded into this shell yet (see InputParser wiring below for
-  // the only VM-adjacent piece that runs today), so there's no real %message
-  // table to resolve menu/item labels against - falls back to "(message N)"
-  // until a future story wires an Interpreter in here.
-  const menuUi = new MenuUi({
-    state,
-    resolveMessage: () => undefined,
-    onChange: () => renderMenuBar(menuUi, menuBar),
-  });
-  renderMenuBar(menuUi, menuBar);
+  // The Interpreter's command implementations (load.pic/draw.pic, sound,
+  // etc.) are all synchronous, so every resource they might touch is
+  // fetched and decoded up front rather than on demand.
+  const [wordsBytes, objectBytes, picBytes, soundBytes, bundleModule, symbolsModule, messagesModule] = await Promise.all([
+    fetch('/WORDS.TOK').then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b)),
+    fetch('/OBJECT').then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b)),
+    fetchResourceRange('PIC', MAX_RESOURCE_ID),
+    fetchResourceRange('SND', MAX_RESOURCE_ID),
+    import('./generated/logic-bundle.json'),
+    import('./generated/symbols.json'),
+    import('./generated/messages.json'),
+  ]);
+  const bundle = bundleModule.default as unknown as LogicBundle;
+  const symbols = symbolsModule.default as unknown as GlobalSymbolTables;
+  const messages = messagesModule.default as unknown as Record<string, Record<string, string>>;
 
-  const wordsResponse = await fetch('/WORDS.TOK');
-  if (!wordsResponse.ok) {
-    console.error(`Failed to load WORDS.TOK: HTTP ${wordsResponse.status}`);
+  const vocabulary = decodeWords(wordsBytes);
+  const objectTable = decodeObjectFile(objectBytes);
+  const roomsByNumber = new Map(bundle.rooms.map((r) => [r.room, r]));
+  const logic0 = roomsByNumber.get(0);
+  if (!logic0) {
+    debug.textContent = 'logic 0 missing from the compiled bundle - run `npm run build:logic`.';
     return;
   }
-  const vocabulary = decodeWords(new Uint8Array(await wordsResponse.arrayBuffer()));
+
+  const state = new VmState();
+  const objects = new ObjectTable({ state });
+  const audioContext = new AudioContext();
+  const soundController = new SoundController({
+    state,
+    audioContext,
+    soundLoader: (id) => soundBytes.get(id),
+  });
+
+  // Resolves a %message number against whichever logic most recently set
+  // up the active room (its own table), falling back to logic 0's - the
+  // best approximation available without per-call "which logic is this"
+  // context (CommandContext doesn't carry it; see commands.ts).
+  function resolveMessage(messageNumber: number): string | undefined {
+    return messages[String(state.getCurrentRoom())]?.[String(messageNumber)] ?? messages['0']?.[String(messageNumber)];
+  }
+
+  const commands = createCommands({
+    loadPictureResource: (n) => picBytes.get(n),
+    getMessage: resolveMessage,
+  });
+  const { commands: objCommands, tests: objTests } = createObjectCommands(objects);
   const parser = new InputParser(vocabulary);
+
+  const symbolTable: SymbolTable = {};
+  for (const [name, value] of Object.entries(symbols.flags)) symbolTable[name] = { kind: 'flag', value };
+  for (const [name, value] of Object.entries(symbols.vars)) symbolTable[name] = { kind: 'var', value };
+  for (const [name, value] of Object.entries(symbols.views)) symbolTable[name] = { kind: 'view', value };
+  for (const [name, value] of Object.entries(symbols.objects)) symbolTable[name] = { kind: 'object', value };
+  Object.assign(symbolTable, logic0.localSymbols);
+
+  const interpreter = new Interpreter({
+    state,
+    symbols: symbolTable,
+    logics: new Map([[0, { statements: logic0.statements }]]),
+    commands: { ...commands, ...objCommands, ...soundController.commands },
+    tests: { ...baseTests, ...objTests, said: parser.said },
+    logicLoader: (n) => {
+      const artifact = roomsByNumber.get(n);
+      if (!artifact) return undefined;
+      Object.assign(symbolTable, artifact.localSymbols);
+      return { statements: artifact.statements };
+    },
+    logger: (message) => console.warn(message),
+  });
+
+  const menuUi = new MenuUi({ state, resolveMessage, onChange: () => renderMenuBar(menuUi, menuBar) });
+  renderMenuBar(menuUi, menuBar);
 
   const parserUi = new ParserUi({
     state,
@@ -115,10 +211,6 @@ async function setupInput(): Promise<void> {
     },
   });
   bindParserInputElement(parserInput, parserUi);
-
-  // Esc clears the in-progress line without submitting it (AGI's cancel.line),
-  // handled directly on the field rather than via KeyboardInput below, which
-  // is for keys typed outside the text entry line.
   parserInput.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       parserInput.value = '';
@@ -132,9 +224,6 @@ async function setupInput(): Promise<void> {
     onMenu: () => menuUi.toggle(),
   });
 
-  // While the menu bar is open, arrow/Enter/Escape drive MenuUi instead of
-  // ego movement/the parser - same precedence as real AGI, where the menu
-  // captures input until closed.
   const MENU_NAV_KEYS: Record<string, () => void> = {
     ArrowLeft: () => menuUi.moveMenu(-1),
     ArrowRight: () => menuUi.moveMenu(1),
@@ -153,15 +242,50 @@ async function setupInput(): Promise<void> {
       return;
     }
     keyboard.handleKeyDown(event.key);
-    renderDebug(debug);
   });
   window.addEventListener('keyup', (event) => {
     if (event.target === parserInput) {
       return;
     }
     keyboard.handleKeyUp(event.key);
-    renderDebug(debug);
   });
+
+  function render(): void {
+    if (!ctx) return;
+    renderFrame(ctx, state, {
+      loadPictureResource: (n) => picBytes.get(n),
+      spriteObjectNumbers: objects.getAnimatedObjectNumbers(),
+      resolveMessage,
+      objects: objectTable.objects as readonly AgiObject[],
+      horizon: objects.getHorizon(),
+    });
+    if (menuUi.isOpen()) {
+      renderMenuBar(menuUi, menuBar);
+    }
+  }
+
+  let cycles = 0;
+  function tick(): void {
+    // Ego's motion is driven by var 6 (ego.dir), which src/input/keyboard.ts
+    // keeps in sync with whichever arrow keys are held - real AGI's
+    // interpreter reads the keyboard/joystick into that var directly and
+    // applies it to ego's "normal" motion every cycle the same way. Once a
+    // script takes programmatic control of ego (move.obj/follow.ego/wander
+    // - anything other than 'normal' motion), the keyboard is ignored until
+    // that finishes.
+    if (objects.getObject(EGO_OBJECT).motion === 'normal') {
+      objects.setDirection(EGO_OBJECT, state.getVar(ReservedVar.EgoDirection));
+    }
+    interpreter.runCycle();
+    objects.update();
+    cycles++;
+    render();
+    renderDebug(debug, state, cycles);
+  }
+
+  render();
+  renderDebug(debug, state, cycles);
+  setInterval(tick, CYCLE_MS);
 }
 
-void setupInput();
+void main();

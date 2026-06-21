@@ -4,7 +4,9 @@ import {
   autoPriorityForY,
   collectSprites,
   colorForPriority,
+  DEFAULT_HORIZON,
   EGO_OBJECT_NUMBER,
+  MAX_AUTO_PRIORITY,
   MAX_PRIORITY,
   MIN_PRIORITY,
   priorityForObject,
@@ -26,13 +28,15 @@ describe('autoPriorityForY', () => {
     }
   });
 
-  it('never exceeds the maximum band, even at the bottom of the picture', () => {
-    expect(autoPriorityForY(167, 0)).toBeLessThanOrEqual(MAX_PRIORITY);
-    expect(autoPriorityForY(167, 0)).toBe(MAX_PRIORITY);
+  it('never reaches 15 automatically - that band is reserved for an explicit set.priority override', () => {
+    expect(autoPriorityForY(167, 0)).toBeLessThan(MAX_PRIORITY);
+    expect(autoPriorityForY(167, 0)).toBe(MAX_AUTO_PRIORITY);
   });
 
-  it('defaults to a horizon of 0 when none is given', () => {
+  it('defaults to AGI\'s standard horizon (36) when none is given', () => {
+    expect(autoPriorityForY(36)).toBe(MIN_PRIORITY);
     expect(autoPriorityForY(0)).toBe(MIN_PRIORITY);
+    expect(DEFAULT_HORIZON).toBe(36);
   });
 });
 
