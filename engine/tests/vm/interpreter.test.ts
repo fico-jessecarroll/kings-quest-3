@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Interpreter, MAX_CALL_DEPTH, MAX_OPS_PER_LOGIC, type SymbolTable } from '../../src/vm/interpreter';
-import { VmState } from '../../src/vm/state';
+import { ReservedFlag, VmState } from '../../src/vm/state';
 import type { CallNode, Logic, Statement } from '../../src/logic/ir';
 
 function call(name: string, args: CallNode['args'] = []): CallNode {
@@ -105,6 +105,39 @@ describe('Interpreter: if/else branch selection', () => {
     interpreter.runLogic(1);
     expect(thenCmd).toHaveBeenCalledTimes(1);
     expect(elseCmd).not.toHaveBeenCalled();
+  });
+});
+
+describe('Interpreter: indirect-addressing assignment ("@=" / "=@")', () => {
+  it('"@=" (lindirect) writes through the target as a var index - RM100.CG\'s per-room var-reset loop', () => {
+    const state = new VmState();
+    state.setVar(60, 250); // work = 250
+    state.setVar(250, 99); // vars[250] starts non-zero
+    const interpreter = new Interpreter({
+      state,
+      symbols: { work: { kind: 'var', value: 60 } },
+      logics: { 1: logicOf({ type: 'assign', target: 'work', op: '@=', value: { kind: 'number', value: 0 } }) },
+    });
+
+    interpreter.runLogic(1);
+    expect(state.getVar(250)).toBe(0); // vars[work] zeroed, not `work` itself
+    expect(state.getVar(60)).toBe(250); // work unchanged
+  });
+
+  it('"=@" (rindirect) reads through the value as a var index - RM99.CG\'s debug console "show var"', () => {
+    const state = new VmState();
+    state.setVar(60, 7); // debug.0 = 7 ("the var number to show")
+    state.setVar(7, 42); // vars[7] is the value being inspected
+    const interpreter = new Interpreter({
+      state,
+      symbols: { 'debug.0': { kind: 'var', value: 60 }, 'debug.1': { kind: 'var', value: 61 } },
+      logics: {
+        1: logicOf({ type: 'assign', target: 'debug.1', op: '=@', value: { kind: 'symbol', name: 'debug.0' } }),
+      },
+    });
+
+    interpreter.runLogic(1);
+    expect(state.getVar(61)).toBe(42); // debug.1 = vars[debug.0] = vars[7]
   });
 });
 
@@ -489,6 +522,65 @@ describe('Interpreter: runCycle and new.room', () => {
     expect(state.getCurrentRoom()).toBe(7);
     expect(afterNewRoom).not.toHaveBeenCalled();
     expect(roomCmd).not.toHaveBeenCalled();
+  });
+
+  it('new.room sets init.log (flag 5) so the new room sees its own first-pass setup, then clears it once that pass has run', () => {
+    const state = new VmState();
+    state.setCurrentRoom(1);
+    const sawInitLog: boolean[] = [];
+    const recordInitLog = vi.fn(() => {
+      sawInitLog.push(state.getFlag(ReservedFlag.InitLogs));
+    });
+    // Guarded by `moved` the same way the "defers to the next cycle" test
+    // above is, so logic 0 only fires new.room() once - otherwise every
+    // later cycle would re-trigger the room change and room 7 would never
+    // get to run its own first pass.
+    const logic0 = logicOf({
+      type: 'if',
+      test: { type: 'comparison', op: '==', left: { kind: 'symbol', name: 'moved' }, right: { kind: 'number', value: 0 } },
+      then: [{ type: 'incdec', target: 'moved', op: '++' }, call('new.room', [{ kind: 'number', value: 7 }])],
+    });
+    const interpreter = new Interpreter({
+      state,
+      symbols: { moved: { kind: 'var', value: 60 } },
+      logics: {
+        0: logic0,
+        7: logicOf(call('recordInitLog')),
+      },
+      commands: { recordInitLog },
+    });
+
+    expect(state.getFlag(ReservedFlag.InitLogs)).toBe(false);
+    interpreter.runCycle(); // logic 0 fires new.room(7); room 7's pass is deferred to the next cycle.
+    expect(state.getFlag(ReservedFlag.InitLogs)).toBe(true);
+    expect(recordInitLog).not.toHaveBeenCalled();
+
+    interpreter.runCycle(); // room 7 runs for the first time, with init.log still true.
+    expect(sawInitLog).toEqual([true]);
+    expect(state.getFlag(ReservedFlag.InitLogs)).toBe(false); // cleared once that pass completed.
+
+    interpreter.runCycle();
+    expect(sawInitLog).toEqual([true, false]); // steady-state cycles see it false.
+  });
+
+  it('clears have.input (flag 2) after one tick, so a submitted line is not reprocessed forever', () => {
+    const state = new VmState();
+    state.setCurrentRoom(1);
+    const sawHaveInput: boolean[] = [];
+    const recordHaveInput = vi.fn(() => sawHaveInput.push(state.getFlag(ReservedFlag.HaveInput)));
+    const interpreter = new Interpreter({
+      state,
+      logics: { 0: logicOf(), 1: logicOf(call('recordHaveInput')) },
+      commands: { recordHaveInput },
+    });
+
+    state.setFlag(ReservedFlag.HaveInput, true); // simulates ParserUi.submit() firing between ticks.
+    interpreter.runCycle();
+    expect(sawHaveInput).toEqual([true]);
+    expect(state.getFlag(ReservedFlag.HaveInput)).toBe(false);
+
+    interpreter.runCycle();
+    expect(sawHaveInput).toEqual([true, false]);
   });
 });
 

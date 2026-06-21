@@ -58,7 +58,18 @@ export interface IfStatement {
 export interface AssignStatement {
   type: 'assign';
   target: string;
-  op: '=' | '+=' | '-=';
+  /**
+   * '@=' and '=@' are AGI's indirect-addressing assignments (the
+   * "lindirectn"/"lindirectv"/"rindirect" opcodes, confirmed by SRC/RM99.CG's
+   * debug console: `debug.1 =@ debug.0` reads "the var numbered debug.0" into
+   * debug.1, and `debug.0 @= debug.1` writes debug.1 into "the var numbered
+   * debug.0"):
+   *  - '@=': indirect on the left - vars[target] = value (target's own
+   *    value is the *address* of the var being written).
+   *  - '=@': indirect on the right - target = vars[value] (value's own
+   *    value is the *address* of the var being read).
+   */
+  op: '=' | '+=' | '-=' | '@=' | '=@';
   value: Literal;
 }
 

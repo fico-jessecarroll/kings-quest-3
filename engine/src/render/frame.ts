@@ -17,6 +17,8 @@ export interface RenderFrameOptions {
   loadPictureResource?: (pictureNumber: number) => Uint8Array | undefined;
   /** Object numbers to draw as placeholder sprites; defaults to just ego. */
   spriteObjectNumbers?: number[];
+  /** The room's current horizon (`set.horizon`/`ObjectTable.getHorizon()`), used for automatic y-based priority; defaults to AGI's standard horizon. */
+  horizon?: number;
   /** Resolves an AGI %message number to its text, for `print`/`print.at`/`display` events. */
   resolveMessage?: (messageNumber: number) => string | undefined;
   /** The decoded OBJECT table's entries, used to list carried items on the `status()` screen and resolve a `show.obj` object number to its name. */
@@ -48,7 +50,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, state: VmState, optio
   }
 
   const spriteObjects = options.spriteObjectNumbers ?? [EGO_OBJECT_NUMBER];
-  drawSprites(ctx, collectSprites(state, spriteObjects));
+  drawSprites(ctx, collectSprites(state, spriteObjects, options.horizon));
 
   drawStatusLine(ctx, formatStatusLine(state.getScore(), state.getMaxScore(), state.isSoundEnabled()));
 

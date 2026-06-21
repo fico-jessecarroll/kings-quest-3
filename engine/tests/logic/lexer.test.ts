@@ -117,7 +117,7 @@ describe('tokenize: representative lines from RM0.CG / RM1.CG', () => {
     ]);
   });
 
-  it('lexes "@" as its own operator token (RM99.CG/RM100.CG typo\'d assignments)', () => {
+  it('lexes "@" as its own operator token (RM99.CG/RM100.CG indirect-addressing assignments)', () => {
     expect(simplify(tokenize('work @= 0;'))).toEqual([
       ['identifier', 'work'],
       ['operator', '@'],

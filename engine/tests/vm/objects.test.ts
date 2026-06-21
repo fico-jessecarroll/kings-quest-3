@@ -25,6 +25,14 @@ describe('ObjectTable: animated-object table', () => {
     expect(table.isAnimated(3)).toBe(true);
   });
 
+  it('getAnimatedObjectNumbers() lists ego plus every animated object, ascending', () => {
+    const state = new VmState();
+    const table = new ObjectTable({ state });
+    table.animate(5);
+    table.animate(2);
+    expect(table.getAnimatedObjectNumbers()).toEqual([0, 2, 5]);
+  });
+
   it('unanimate() removes an object from the animated set but not ego', () => {
     const state = new VmState();
     const table = new ObjectTable({ state });

@@ -321,12 +321,18 @@ describe('parseLogic: legacy source quirks', () => {
     ]);
   });
 
-  it('treats "@=" and "=@" as plain "=" assignment typos (RM99.CG, RM100.CG)', () => {
+  it('parses "@=" and "=@" as AGI\'s indirect-addressing assignments (RM99.CG, RM100.CG)', () => {
+    // "work @= 0" (RM100.CG): lindirectn - vars[work] = 0.
     expect(parseLogic('work @= 0;').statements).toEqual([
-      { type: 'assign', target: 'work', op: '=', value: { kind: 'number', value: 0 } },
+      { type: 'assign', target: 'work', op: '@=', value: { kind: 'number', value: 0 } },
     ]);
+    // "debug.1 =@ debug.0" (RM99.CG "show var"): rindirect - debug.1 = vars[debug.0].
     expect(parseLogic('debug.1 =@ debug.0;').statements).toEqual([
-      { type: 'assign', target: 'debug.1', op: '=', value: { kind: 'symbol', name: 'debug.0' } },
+      { type: 'assign', target: 'debug.1', op: '=@', value: { kind: 'symbol', name: 'debug.0' } },
+    ]);
+    // "debug.0 @= debug.1" (RM99.CG "set var"): lindirectv - vars[debug.0] = debug.1.
+    expect(parseLogic('debug.0 @= debug.1;').statements).toEqual([
+      { type: 'assign', target: 'debug.0', op: '@=', value: { kind: 'symbol', name: 'debug.1' } },
     ]);
   });
 

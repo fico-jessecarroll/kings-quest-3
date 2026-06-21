@@ -33,7 +33,13 @@ interface Context {
 }
 
 const IDENTIFIER = /[A-Za-z0-9_.'$]+/g;
-const DIRECTIVE_LINE = /^\s*%([A-Za-z]+)\s*(.*)$/;
+// "%" and "#" are interchangeable directive prefixes in this source tree -
+// e.g. SRC/RM103.CG and SRC/RM108.CG both "%include"/"#include" the same
+// "gamedefs.reh", and GAMEDEFS.REH itself is written entirely in "#" with no
+// "%" at all, yet defines flags (eagleHere, bombsAway, ...) that other rooms
+// genuinely set/reset/test at runtime. There is no live/disabled distinction
+// between them: both are real, resolved directives.
+const DIRECTIVE_LINE = /^\s*[%#]([A-Za-z]+)\s*(.*)$/;
 const NAME_VALUE = /^(\S+)\s+(.+)$/;
 const ACTION_LIKE = /^(\S+)\(([^)]*)\)\s+(\S+)$/;
 
@@ -141,21 +147,16 @@ function addSymbol(ctx: Context, name: string, kind: SymbolKind, raw: string): v
   ctx.defineOrder.push(name);
 }
 
-// Consumes a "%message N <quoted string>" directive's number and (possibly
-// multi-line) string body starting at lines[i], storing it into sink if
-// given. Used both for live %message directives and for disabled #message
-// ones (see DISABLED_MESSAGE below) - SYSDEFS-style sources comment out a
-// message by swapping its leading "%" for "#", but the quoted text on the
-// following line(s) is left behind verbatim and must still be consumed
-// (just discarded) so it doesn't leak into the code stream as bogus
-// statements.
+// Consumes a "%message N <quoted string>" (or "#message N ...") directive's
+// number and (possibly multi-line) string body starting at lines[i], storing
+// it into sink.
 function consumeMessageBody(
   rest: string,
   lines: string[],
   i: number,
   line: string,
   label: string,
-  sink: Record<number, string> | undefined
+  sink: Record<number, string>
 ): number {
   const numMatch = /^\s*(\d+)/.exec(rest);
   if (!numMatch) {
@@ -165,13 +166,9 @@ function consumeMessageBody(
   const afterNumber = rest.slice(numMatch[0].length);
   const searchLines = [afterNumber, ...lines.slice(i + 1)];
   const { value, endLine: relEndLine } = readQuotedString(searchLines, 0);
-  if (sink) {
-    sink[num] = value;
-  }
+  sink[num] = value;
   return (relEndLine === 0 ? i : i + relEndLine) + 1;
 }
-
-const DISABLED_MESSAGE_LINE = /^\s*#message\b(.*)$/;
 
 function processLines(lines: string[], baseDir: string, ctx: Context, label: string): void {
   let i = 0;
@@ -179,25 +176,12 @@ function processLines(lines: string[], baseDir: string, ctx: Context, label: str
     const line = lines[i];
     const directiveMatch = DIRECTIVE_LINE.exec(line);
     if (!directiveMatch) {
-      // A disabled "#message N" still has its quoted text sitting on the
-      // line(s) below (unlike other disabled "#"-led declarations, which
-      // are wholly self-contained); that body must be consumed too, or it
-      // leaks into the code stream as a bogus statement.
-      const disabledMessageMatch = DISABLED_MESSAGE_LINE.exec(line);
-      if (disabledMessageMatch) {
-        i = consumeMessageBody(disabledMessageMatch[1], lines, i, line, label, undefined);
-        continue;
-      }
-
       // Strip the DOS EOF marker (0x1A / SUB) some of these legacy files
       // (e.g. RM1.MSG) end with; it carries no meaning and would otherwise
       // leak into the code stream as a bogus statement.
       const codeLine = stripCommentOutsideQuotes(line).replace(/\x1a/g, '');
       const trimmed = codeLine.trim();
-      // SYSDEFS disables some %action/%var/%define declarations by
-      // swapping their leading "%" for "#" rather than removing them
-      // outright; treat a "#"-led line as a comment, like "[".
-      if (trimmed !== '' && !trimmed.startsWith('#')) {
+      if (trimmed !== '') {
         ctx.codeLines.push(codeLine);
       }
       i++;

@@ -248,6 +248,11 @@ export class ObjectTable {
     return this.objects.has(objectNumber);
   }
 
+  /** Every currently-animated object number (always includes ego), ascending - for the renderer to draw a sprite per object without duplicating this table's own bookkeeping. */
+  getAnimatedObjectNumbers(): number[] {
+    return [...this.objects.keys()].sort((a, b) => a - b);
+  }
+
   /** Removes every animated object except ego - AGI's `unanimate.all`. */
   unanimateAll(): void {
     for (const objectNumber of [...this.objects.keys()]) {
