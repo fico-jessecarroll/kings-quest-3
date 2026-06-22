@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileAllLogic, DEFAULT_SRC_DIR, type CompileResult, type RoomArtifact } from './compile-logic';
 import { Interpreter, type SymbolTable } from '../src/vm/interpreter';
+import { buildSymbolTable } from '../src/vm/symbols';
 import { VmState } from '../src/vm/state';
 import { ObjectTable } from '../src/vm/objects';
 import { createCommands, tests as baseTests } from '../src/vm/commands';
@@ -64,12 +65,7 @@ export function runRoomHeadless(fixture: DiscoverGapsFixture, room: RoomArtifact
   const commands = createCommands({ loadPictureResource, logger: (m) => messages.push(m) });
   const parser = new InputParser(vocabulary);
 
-  const symTable: SymbolTable = {};
-  for (const [name, value] of Object.entries(result.symbols.flags)) symTable[name] = { kind: 'flag', value };
-  for (const [name, value] of Object.entries(result.symbols.vars)) symTable[name] = { kind: 'var', value };
-  for (const [name, value] of Object.entries(result.symbols.views)) symTable[name] = { kind: 'view', value };
-  for (const [name, value] of Object.entries(result.symbols.objects)) symTable[name] = { kind: 'object', value };
-  Object.assign(symTable, logic0.localSymbols, room.localSymbols);
+  const symTable: SymbolTable = buildSymbolTable(result.symbols, logic0.localSymbols, room.localSymbols);
 
   const logics = new Map<number, Logic>();
   logics.set(0, { statements: logic0.statements });
