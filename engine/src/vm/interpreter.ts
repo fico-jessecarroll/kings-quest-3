@@ -273,8 +273,13 @@ export class Interpreter {
    * every room logic's `if (init.log) { ...one-time setup...; return(); }`
    * block at the top tests to detect "I was just entered." `runCycle`
    * clears it again once that first pass has actually run.
+   *
+   * Public so a `new.room`/`new.room.f` command override (see engine.ts's
+   * `createEngine`, which layers AGI's documented var/object/sound
+   * housekeeping on top) can still hand off to this same deferred-room-
+   * switch mechanism rather than reimplementing it against private state.
    */
-  private enterRoom(room: number): void {
+  enterRoom(room: number): void {
     this.state.setCurrentRoom(room);
     this.state.setFlag(ReservedFlag.InitLogs, true);
     this.roomChangeRequested = true;

@@ -417,6 +417,11 @@ export class VmState {
     }
   }
 
+  /** Deactivates every controller - part of AGI's `new.room` housekeeping, so input bound in the old room can't fire in the new one's first cycle. */
+  resetControllers(): void {
+    this.activeControllers.clear();
+  }
+
   /** Starts a new menu (`set.menu`); subsequent `addMenuItem` calls attach to this menu until the next `addMenu`. */
   addMenu(message: number): void {
     this.menus.push({ message, items: [] });

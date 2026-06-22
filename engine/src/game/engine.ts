@@ -11,10 +11,10 @@
  * the same wiring instead of re-deriving it.
  */
 
-import { Interpreter, type SymbolTable } from '../vm/interpreter';
+import { Interpreter, type CommandImpl, type SymbolTable } from '../vm/interpreter';
 import { buildSymbolTable } from '../vm/symbols';
-import { ObjectTable } from '../vm/objects';
-import { VmState } from '../vm/state';
+import { DEFAULT_HORIZON, ObjectTable } from '../vm/objects';
+import { ReservedVar, VmState } from '../vm/state';
 import { createCommands, tests as baseTests } from '../vm/commands';
 import { createObjectCommands } from '../vm/objectCommands';
 import { InputParser } from '../vm/tests';
@@ -24,6 +24,8 @@ import type { GameMessages, GameResources } from './resources';
 export interface EngineOptions {
   /** Receives one line per first-seen problem (unimplemented command/test, missing resource). Defaults to console.warn. */
   logger?: (message: string) => void;
+  /** Invoked by `new.room`/`new.room.f`'s housekeeping to stop any in-flight sound, matching AGI's own new_room(). Defaults to a no-op since `createEngine` doesn't own a `SoundController` (that needs an `AudioContext`); callers that wire one up pass its `stop()` method. */
+  stopSound?: () => void;
 }
 
 export interface Engine {
@@ -69,13 +71,55 @@ export function createEngine(resources: GameResources, options: EngineOptions = 
   });
   const { commands: objCommands, tests: objTests } = createObjectCommands(objectTable, { logger });
 
+  // `new.room`/`new.room.f`'s documented housekeeping (per the AGI Specs
+  // reverse-engineering doc the ScummVM/WinAGI interpreters also implement
+  // new_room() against): stop any sound, erase every animated object but
+  // ego, drop the movement block and horizon override, deactivate every
+  // controller, snapshot the outgoing room into PreviousRoom, and zero the
+  // border-touch vars - all before handing off to the interpreter's own
+  // CurrentRoom/init-logs switch (which defers the new room's first cycle
+  // to the next runCycle()). These two override the same-named builtins
+  // Interpreter registers itself, since `interpreter.enterRoom` alone only
+  // covers that last step.
+  const newRoomCommands: Record<string, CommandImpl> = {
+    'new.room': (ctx) => {
+      const room = ctx.args[0];
+      if (typeof room !== 'number') {
+        logger(`new.room(): expected a numeric room, got ${String(room)}`);
+        return;
+      }
+      changeRoom(room);
+    },
+    'new.room.f': (ctx) => {
+      const roomVar = ctx.args[0];
+      if (typeof roomVar !== 'number') {
+        logger(`new.room.f(): expected a numeric var index, got ${String(roomVar)}`);
+        return;
+      }
+      changeRoom(state.getVar(roomVar));
+    },
+  };
+
+  function changeRoom(room: number): void {
+    options.stopSound?.();
+    objectTable.unanimateAll();
+    objectTable.clearBlock();
+    objectTable.setHorizon(DEFAULT_HORIZON);
+    state.resetControllers();
+    state.setVar(ReservedVar.PreviousRoom, state.getCurrentRoom());
+    state.setVar(ReservedVar.EgoBorderTouched, 0);
+    state.setVar(ReservedVar.ObjectBorderTouched, 0);
+    state.setVar(ReservedVar.ObjectBorderCode, 0);
+    interpreter.enterRoom(room);
+  }
+
   const symbolTable: SymbolTable = buildSymbolTable(resources.symbols, logic0.localSymbols);
 
   const interpreter = new Interpreter({
     state,
     symbols: symbolTable,
     logics: new Map([[0, { statements: logic0.statements }]]),
-    commands: { ...commands, ...objCommands },
+    commands: { ...commands, ...objCommands, ...newRoomCommands },
     tests: { ...baseTests, ...objTests, said: parser.said },
     logicLoader: (number) => {
       const artifact = roomsByNumber.get(number);
