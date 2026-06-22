@@ -1,8 +1,9 @@
 // Boot-time resource loader: fetches the compiled logic bundle (`npm run
-// build:logic`'s output, written to src/generated/ and served from there)
-// plus every raw asset the Interpreter's commands need - OBJECT, WORDS.TOK,
-// and every PICTURE.n resource under repo-root PIC/ (served via Vite's
-// publicDir; see vite.config.ts) - all up front. The Interpreter's commands
+// build:logic`'s output, written to src/generated/ and served from there),
+// OBJECT, WORDS.TOK, and every PICTURE.n resource under repo-root PIC/
+// (served via Vite's publicDir; see vite.config.ts) - all up front. Sound
+// (SND.n) loading is handled separately by the existing sound-playback
+// integration and is out of scope here. The Interpreter's picture commands
 // (load.pic/draw.pic, etc., see render/frame.ts and vm/commands.ts) are
 // synchronous, so callers need every picture resource already in hand as a
 // Map before building a `loadPictureResource(n) => Uint8Array | undefined`
