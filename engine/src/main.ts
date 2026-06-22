@@ -17,6 +17,7 @@ import { MenuUi } from './input/menu-ui';
 import { bindParserInputElement, ParserUi } from './input/parser-ui';
 import { decodeObjectFile, type AgiObject } from './resources/object';
 import { decodeWords } from './resources/words';
+import { createGameLoop } from './game/loop';
 import { renderFrame } from './render/frame';
 import { sizeScreenCanvas } from './render/screen';
 import { createCommands, tests as baseTests } from './vm/commands';
@@ -28,8 +29,6 @@ import { ReservedVar, VmState } from './vm/state';
 import { InputParser } from './vm/tests';
 import type { GlobalSymbolTables, LogicBundle } from '../tools/compile-logic';
 
-/** AGI's base interpreter rate: roughly 20 cycles/sec before `set.speed` skips cycles on top (that menu - RM0.CG's "Normal/Slow/Fast/Fastest" - isn't wired to anything yet; see engine/README.md). */
-const CYCLE_MS = 50;
 const MAX_RESOURCE_ID = 255;
 
 async function fetchResourceRange(dir: string, max: number): Promise<Map<number, Uint8Array>> {
@@ -52,20 +51,18 @@ function buildShell(): {
   canvas: HTMLCanvasElement;
 } | null {
   const app = document.querySelector<HTMLDivElement>('#app');
-  if (!app) {
+  const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas');
+  if (!app || !canvas) {
     return null;
   }
   app.textContent = '';
+  sizeScreenCanvas(canvas);
 
   const title = document.createElement('h1');
   title.textContent = "King's Quest III";
 
   const menuBar = document.createElement('div');
   menuBar.id = 'menu-bar';
-
-  const canvas = document.createElement('canvas');
-  canvas.id = 'game-canvas';
-  sizeScreenCanvas(canvas);
 
   const parserInput = document.createElement('input');
   parserInput.type = 'text';
