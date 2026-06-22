@@ -35,6 +35,7 @@ export interface GlobalSymbolTables {
   views: Record<string, number>;
   objects: Record<string, number>;
   roomNames: Record<string, number>;
+  defines: Record<string, number>;
 }
 
 export interface RoomArtifact {
@@ -74,6 +75,7 @@ function buildGlobalSymbolTables(srcDir: string): GlobalSymbolTables {
   const views: Record<string, number> = {};
   const objects: Record<string, number> = {};
   const roomNames: Record<string, number> = {};
+  const defines: Record<string, number> = {};
 
   for (const header of SHARED_HEADERS) {
     const { symbols } = preprocessFile(join(srcDir, header), srcDir);
@@ -91,11 +93,13 @@ function buildGlobalSymbolTables(srcDir: string): GlobalSymbolTables {
         objects[name] = entry.value;
       } else if (entry.kind === 'define' && name.startsWith('rm.')) {
         roomNames[name] = entry.value;
+      } else if (entry.kind === 'define') {
+        defines[name] = entry.value;
       }
     }
   }
 
-  return { flags, vars, views, objects, roomNames };
+  return { flags, vars, views, objects, roomNames, defines };
 }
 
 function listRoomFiles(srcDir: string): { room: number; file: string }[] {
@@ -118,7 +122,9 @@ function isGlobalSymbol(global: GlobalSymbolTables, name: string, entry: SymbolE
           : entry.kind === 'object'
             ? global.objects
             : entry.kind === 'define'
-              ? global.roomNames
+              ? name.startsWith('rm.')
+                ? global.roomNames
+                : global.defines
               : undefined;
   return table !== undefined && table[name] === entry.value;
 }
@@ -197,7 +203,7 @@ function main(): void {
   console.log(
     `  global symbols: ${Object.keys(symbols.flags).length} flags, ${Object.keys(symbols.vars).length} vars, ` +
       `${Object.keys(symbols.views).length} views, ${Object.keys(symbols.objects).length} objects, ` +
-      `${Object.keys(symbols.roomNames).length} room names`
+      `${Object.keys(symbols.roomNames).length} room names, ${Object.keys(symbols.defines).length} defines`
   );
 
   if (report.failures.length > 0) {
