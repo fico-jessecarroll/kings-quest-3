@@ -66,6 +66,35 @@ describe('compile-logic: bundles every SRC/RM*.CG', () => {
     expect(symbols.roomNames['rm.tower']).toBe(1);
   });
 
+  it('resolves the residual per-room #define-alias family (B2) to their owning GAMEDEFS.H register', () => {
+    // Each of these is a room-local "%define name lvN/lfN" alias (not a
+    // shared-header symbol), so it's correctly absent from the global
+    // tables and instead lives in that room's own localSymbols, with its
+    // value already resolved through to the lvN/lfN register GAMEDEFS.H
+    // declares - confirmed here by grepping SRC/ for each definition site.
+    // (Macro substitution then inlines the alias to that register name in
+    // the room's preprocessed source, so the interpreter never needs to
+    // resolve the alias name itself at runtime - it resolves "lv0"/"lf2"
+    // etc. through the global vars/flags tables instead.)
+    const byRoom = new Map(result.bundle.rooms.map((r) => [r.room, r]));
+    const cases: { room: number; name: string; register: string; kind: 'flag' | 'var' }[] = [
+      { room: 42, name: 'snore.timer', register: 'lv10', kind: 'var' },
+      { room: 57, name: 'first.pass', register: 'lf16', kind: 'flag' },
+      { room: 83, name: 'egoLoc', register: 'lv0', kind: 'var' },
+      { room: 83, name: 'can.chase', register: 'lf6', kind: 'flag' },
+      { room: 87, name: 'leave.room', register: 'lf2', kind: 'flag' },
+    ];
+
+    for (const { room, name, register, kind } of cases) {
+      const local = byRoom.get(room)?.localSymbols[name];
+      const globalTable = kind === 'flag' ? result.symbols.flags : result.symbols.vars;
+      expect(local, `room ${room}'s localSymbols.${name}`).toEqual({ kind: 'define', value: globalTable[register] });
+    }
+
+    // flyLine (RM112.CG) aliases straight to a numeric literal, not a register.
+    expect(byRoom.get(112)?.localSymbols['flyLine']).toEqual({ kind: 'define', value: 35 });
+  });
+
   it.each([1, 25, 89])(
     "room %i's bundled message count matches its standalone .MSG file",
     (room) => {
