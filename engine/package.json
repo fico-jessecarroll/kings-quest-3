@@ -4,7 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "predev": "npm run build:logic",
     "dev": "vite",
+    "prebuild": "npm run build:logic",
     "build": "vite build",
     "build:logic": "tsx tools/compile-logic.ts",
     "discover-gaps": "tsx tools/discover-gaps.ts",
