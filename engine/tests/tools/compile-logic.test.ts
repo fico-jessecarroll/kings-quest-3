@@ -48,6 +48,24 @@ describe('compile-logic: bundles every SRC/RM*.CG', () => {
     expect(symbols.roomNames['rm.tower']).toBe(1);
   });
 
+  it('carries non-rm.* %define constants into the global defines table', () => {
+    const { symbols } = result;
+    // machine.type/monitor.type values, from SYSDEFS, reached through GAMEDEFS.AL -> GAMEDEFS.H -> SYSDEFS.
+    expect(symbols.defines.PC).toBe(0);
+    expect(symbols.defines.TANDY).toBe(2);
+    expect(symbols.defines.AMIGA).toBe(5);
+    expect(symbols.defines.ST).toBe(4);
+    expect(symbols.vars['monitor.type']).toBe(26);
+
+    // beenIn49 is a %define alias for the beenIn11 flag (GAMEDEFS.H), so it
+    // must resolve through to that flag's value rather than being dropped.
+    expect(symbols.defines.beenIn49).toBe(symbols.flags.beenIn11);
+
+    // rm.* defines still go to roomNames, not defines.
+    expect(symbols.defines['rm.tower']).toBeUndefined();
+    expect(symbols.roomNames['rm.tower']).toBe(1);
+  });
+
   it.each([1, 25, 89])(
     "room %i's bundled message count matches its standalone .MSG file",
     (room) => {
