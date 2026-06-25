@@ -13,7 +13,7 @@
 
 import { Interpreter, type CommandImpl, type SymbolTable } from '../vm/interpreter';
 import { buildSymbolTable } from '../vm/symbols';
-import { DEFAULT_HORIZON, ObjectTable } from '../vm/objects';
+import { DEFAULT_HORIZON, EGO_OBJECT, ObjectTable } from '../vm/objects';
 import { ReservedVar, VmState } from '../vm/state';
 import { createCommands, tests as baseTests } from '../vm/commands';
 import { createObjectCommands } from '../vm/objectCommands';
@@ -40,6 +40,21 @@ export interface Engine {
 /** Resolves a %message number against `room`'s own message table, falling back to logic 0's - the best approximation available without per-call "which logic is this" context (see commands.ts's `CommandContext`). */
 export function resolveRoomMessage(messages: GameMessages, room: number, messageNumber: number): string | undefined {
   return messages[String(room)]?.[String(messageNumber)] ?? messages['0']?.[String(messageNumber)];
+}
+
+/**
+ * Applies ego's direction var (v6, kept in sync with held arrow keys by
+ * src/input/keyboard.ts) to ego's "normal" motion - the same way real AGI's
+ * interpreter reads its input device into that var and feeds it to ego every
+ * cycle. No-op while ego is under programmatic motion (move.obj/follow.ego/
+ * wander - anything other than 'normal'), matching AGI's documented behavior
+ * of ignoring the keyboard until that finishes. Callers run this once per
+ * cycle, before `Interpreter.runCycle()`.
+ */
+export function applyEgoDirectionFromInput(state: VmState, objectTable: ObjectTable): void {
+  if (objectTable.getObject(EGO_OBJECT).motion === 'normal') {
+    objectTable.setDirection(EGO_OBJECT, state.getVar(ReservedVar.EgoDirection));
+  }
 }
 
 /**

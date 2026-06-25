@@ -1,42 +1,34 @@
 /**
- * The real game shell: boots the compiled logic bundle (run `npm run
- * build:logic` first - see tools/compile-logic.ts) into an Interpreter wired
- * to every VM/render subsystem this repo has built (state, animated objects,
- * picture/sprite rendering, sound, the text parser, the menu bar), then
- * drives it via the requestAnimationFrame-backed game loop (game/loop.ts),
- * which honors `set.speed`-style slowdown through ReservedVar.TimeDelay -
- * and renders one frame per cycle batch to a canvas.
- *
- * Earlier versions of this file only wired keyboard/menu/parser input
- * straight onto VmState with no Interpreter running at all (no logic ever
- * executed, so nothing they touched had any effect beyond the DOM debug
- * readout). This is the first version that actually plays the game.
+ * The real game shell: loads every resource the game needs (A1,
+ * game/resources.ts), assembles them into a live Interpreter via the A2
+ * conductor core (game/engine.ts's `createEngine`) - the same wiring the
+ * headless `discover-gaps` harness and the integration test suite build on
+ * - then drives it with the A4 fixed-step game loop (game/loop.ts). Live
+ * input - keyboard, the text parser, and the menu bar, all under
+ * src/input/* - is wired onto the engine's shared `VmState` exactly as the
+ * earlier inline-wiring version of this file did, just without re-deriving
+ * the Interpreter/command/symbol-table assembly `createEngine` already owns.
  */
 
 import { KeyboardInput } from './input/keyboard';
 import { MenuUi } from './input/menu-ui';
 import { bindParserInputElement, ParserUi } from './input/parser-ui';
 import { decodeObjectFile, type AgiObject } from './resources/object';
-import { decodeWords } from './resources/words';
+import { applyEgoDirectionFromInput, createEngine } from './game/engine';
+import { loadGameResources } from './game/resources';
 import { createGameLoop } from './game/loop';
 import { renderFrame } from './render/frame';
 import { sizeScreenCanvas } from './render/screen';
-import { createCommands, tests as baseTests } from './vm/commands';
-import { createObjectCommands } from './vm/objectCommands';
-import { EGO_OBJECT, ObjectTable } from './vm/objects';
-import { Interpreter, type SymbolTable } from './vm/interpreter';
 import { SoundController } from './vm/soundController';
-import { ReservedVar, VmState } from './vm/state';
-import { InputParser } from './vm/tests';
-import type { GlobalSymbolTables, LogicBundle } from '../tools/compile-logic';
+import { ReservedVar, type VmState } from './vm/state';
 
-const MAX_RESOURCE_ID = 255;
+const MAX_SOUND_NUMBER = 255;
 
-async function fetchResourceRange(dir: string, max: number): Promise<Map<number, Uint8Array>> {
-  const ids = Array.from({ length: max + 1 }, (_, i) => i);
+async function fetchSounds(): Promise<Map<number, Uint8Array>> {
+  const ids = Array.from({ length: MAX_SOUND_NUMBER + 1 }, (_, i) => i);
   const results = await Promise.all(
     ids.map(async (id): Promise<[number, Uint8Array] | null> => {
-      const res = await fetch(`/${dir}/${dir}.${id}`);
+      const res = await fetch(`/SND/SND.${id}`);
       if (!res.ok) return null;
       return [id, new Uint8Array(await res.arrayBuffer())];
     }),
@@ -127,81 +119,39 @@ async function main(): Promise<void> {
 
   // The Interpreter's command implementations (load.pic/draw.pic, sound,
   // etc.) are all synchronous, so every resource they might touch is
-  // fetched and decoded up front rather than on demand.
-  const [wordsBytes, objectBytes, picBytes, soundBytes, bundleModule, symbolsModule, messagesModule] = await Promise.all([
-    fetch('/WORDS.TOK').then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b)),
-    fetch('/OBJECT').then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b)),
-    fetchResourceRange('PIC', MAX_RESOURCE_ID),
-    fetchResourceRange('SND', MAX_RESOURCE_ID),
-    import('./generated/logic-bundle.json'),
-    import('./generated/symbols.json'),
-    import('./generated/messages.json'),
-  ]);
-  const bundle = bundleModule.default as unknown as LogicBundle;
-  const symbols = symbolsModule.default as unknown as GlobalSymbolTables;
-  const messages = messagesModule.default as unknown as Record<string, Record<string, string>>;
+  // fetched and decoded up front rather than on demand. Sound is fetched
+  // separately from loadGameResources(), which is scoped to A1's bundle/
+  // OBJECT/WORDS/PICTURE set - see game/resources.ts.
+  const [resources, soundBytes] = await Promise.all([loadGameResources(), fetchSounds()]);
+  const staticObjectTable = decodeObjectFile(resources.objectBytes);
 
-  const vocabulary = decodeWords(wordsBytes);
-  const objectTable = decodeObjectFile(objectBytes);
-  const roomsByNumber = new Map(bundle.rooms.map((r) => [r.room, r]));
-  const logic0 = roomsByNumber.get(0);
-  if (!logic0) {
-    debug.textContent = 'logic 0 missing from the compiled bundle - run `npm run build:logic`.';
-    return;
-  }
-
-  const state = new VmState();
-  const objects = new ObjectTable({ state });
   const audioContext = new AudioContext();
-  const soundController = new SoundController({
-    state,
+  // SoundController needs the engine's VmState, but the engine's new.room
+  // housekeeping needs SoundController's stop() before SoundController can
+  // be built - this closure breaks that cycle by deferring the lookup until
+  // a room transition actually happens, by which point soundController has
+  // been assigned below.
+  let soundController: SoundController;
+  const engine = createEngine(resources, { stopSound: () => soundController.stop() });
+  soundController = new SoundController({
+    state: engine.state,
     audioContext,
     soundLoader: (id) => soundBytes.get(id),
   });
-
-  // Resolves a %message number against whichever logic most recently set
-  // up the active room (its own table), falling back to logic 0's - the
-  // best approximation available without per-call "which logic is this"
-  // context (CommandContext doesn't carry it; see commands.ts).
-  function resolveMessage(messageNumber: number): string | undefined {
-    return messages[String(state.getCurrentRoom())]?.[String(messageNumber)] ?? messages['0']?.[String(messageNumber)];
+  for (const [name, impl] of Object.entries(soundController.commands)) {
+    engine.interpreter.registerCommand(name, impl);
   }
 
-  const commands = createCommands({
-    loadPictureResource: (n) => picBytes.get(n),
-    getMessage: resolveMessage,
+  const menuUi = new MenuUi({
+    state: engine.state,
+    resolveMessage: engine.resolveMessage,
+    onChange: () => renderMenuBar(menuUi, menuBar),
   });
-  const { commands: objCommands, tests: objTests } = createObjectCommands(objects);
-  const parser = new InputParser(vocabulary);
-
-  const symbolTable: SymbolTable = {};
-  for (const [name, value] of Object.entries(symbols.flags)) symbolTable[name] = { kind: 'flag', value };
-  for (const [name, value] of Object.entries(symbols.vars)) symbolTable[name] = { kind: 'var', value };
-  for (const [name, value] of Object.entries(symbols.views)) symbolTable[name] = { kind: 'view', value };
-  for (const [name, value] of Object.entries(symbols.objects)) symbolTable[name] = { kind: 'object', value };
-  Object.assign(symbolTable, logic0.localSymbols);
-
-  const interpreter = new Interpreter({
-    state,
-    symbols: symbolTable,
-    logics: new Map([[0, { statements: logic0.statements }]]),
-    commands: { ...commands, ...objCommands, ...soundController.commands },
-    tests: { ...baseTests, ...objTests, said: parser.said },
-    logicLoader: (n) => {
-      const artifact = roomsByNumber.get(n);
-      if (!artifact) return undefined;
-      Object.assign(symbolTable, artifact.localSymbols);
-      return { statements: artifact.statements };
-    },
-    logger: (message) => console.warn(message),
-  });
-
-  const menuUi = new MenuUi({ state, resolveMessage, onChange: () => renderMenuBar(menuUi, menuBar) });
   renderMenuBar(menuUi, menuBar);
 
   const parserUi = new ParserUi({
-    state,
-    parser,
+    state: engine.state,
+    parser: engine.parser,
     onSubmit: (input) => {
       const entry = document.createElement('li');
       entry.textContent = input;
@@ -216,7 +166,7 @@ async function main(): Promise<void> {
   });
 
   const keyboard = new KeyboardInput({
-    state,
+    state: engine.state,
     onEnter: () => parserInput.focus(),
     onEscape: () => parserInput.blur(),
     onMenu: () => menuUi.toggle(),
@@ -250,12 +200,12 @@ async function main(): Promise<void> {
 
   function render(): void {
     if (!ctx) return;
-    renderFrame(ctx, state, {
-      loadPictureResource: (n) => picBytes.get(n),
-      spriteObjectNumbers: objects.getAnimatedObjectNumbers(),
-      resolveMessage,
-      objects: objectTable.objects as readonly AgiObject[],
-      horizon: objects.getHorizon(),
+    renderFrame(ctx, engine.state, {
+      loadPictureResource: (n) => resources.pictures.get(n),
+      spriteObjectNumbers: engine.objectTable.getAnimatedObjectNumbers(),
+      resolveMessage: engine.resolveMessage,
+      objects: staticObjectTable.objects as readonly AgiObject[],
+      horizon: engine.objectTable.getHorizon(),
     });
     if (menuUi.isOpen()) {
       renderMenuBar(menuUi, menuBar);
@@ -264,30 +214,21 @@ async function main(): Promise<void> {
 
   let cycles = 0;
   const loop = createGameLoop({
-    state,
+    state: engine.state,
     runCycle: () => {
-      // Ego's motion is driven by var 6 (ego.dir), which src/input/keyboard.ts
-      // keeps in sync with whichever arrow keys are held - real AGI's
-      // interpreter reads the keyboard/joystick into that var directly and
-      // applies it to ego's "normal" motion every cycle the same way. Once a
-      // script takes programmatic control of ego (move.obj/follow.ego/wander
-      // - anything other than 'normal' motion), the keyboard is ignored until
-      // that finishes.
-      if (objects.getObject(EGO_OBJECT).motion === 'normal') {
-        objects.setDirection(EGO_OBJECT, state.getVar(ReservedVar.EgoDirection));
-      }
-      interpreter.runCycle();
+      applyEgoDirectionFromInput(engine.state, engine.objectTable);
+      engine.interpreter.runCycle();
       cycles++;
     },
-    updateObjects: () => objects.update(),
+    updateObjects: () => engine.objectTable.update(),
     render: () => {
       render();
-      renderDebug(debug, state, cycles);
+      renderDebug(debug, engine.state, cycles);
     },
   });
 
   render();
-  renderDebug(debug, state, cycles);
+  renderDebug(debug, engine.state, cycles);
   loop.start();
 }
 
