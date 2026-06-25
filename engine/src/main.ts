@@ -3,8 +3,9 @@
  * build:logic` first - see tools/compile-logic.ts) into an Interpreter wired
  * to every VM/render subsystem this repo has built (state, animated objects,
  * picture/sprite rendering, sound, the text parser, the menu bar), then
- * drives it on a fixed-rate timer - AGI's own base cycle rate, before any
- * `set.speed`-style slowdown - and renders one frame per tick to a canvas.
+ * drives it via the requestAnimationFrame-backed game loop (game/loop.ts),
+ * which honors `set.speed`-style slowdown through ReservedVar.TimeDelay -
+ * and renders one frame per cycle batch to a canvas.
  *
  * Earlier versions of this file only wired keyboard/menu/parser input
  * straight onto VmState with no Interpreter running at all (no logic ever
@@ -262,27 +263,32 @@ async function main(): Promise<void> {
   }
 
   let cycles = 0;
-  function tick(): void {
-    // Ego's motion is driven by var 6 (ego.dir), which src/input/keyboard.ts
-    // keeps in sync with whichever arrow keys are held - real AGI's
-    // interpreter reads the keyboard/joystick into that var directly and
-    // applies it to ego's "normal" motion every cycle the same way. Once a
-    // script takes programmatic control of ego (move.obj/follow.ego/wander
-    // - anything other than 'normal' motion), the keyboard is ignored until
-    // that finishes.
-    if (objects.getObject(EGO_OBJECT).motion === 'normal') {
-      objects.setDirection(EGO_OBJECT, state.getVar(ReservedVar.EgoDirection));
-    }
-    interpreter.runCycle();
-    objects.update();
-    cycles++;
-    render();
-    renderDebug(debug, state, cycles);
-  }
+  const loop = createGameLoop({
+    state,
+    runCycle: () => {
+      // Ego's motion is driven by var 6 (ego.dir), which src/input/keyboard.ts
+      // keeps in sync with whichever arrow keys are held - real AGI's
+      // interpreter reads the keyboard/joystick into that var directly and
+      // applies it to ego's "normal" motion every cycle the same way. Once a
+      // script takes programmatic control of ego (move.obj/follow.ego/wander
+      // - anything other than 'normal' motion), the keyboard is ignored until
+      // that finishes.
+      if (objects.getObject(EGO_OBJECT).motion === 'normal') {
+        objects.setDirection(EGO_OBJECT, state.getVar(ReservedVar.EgoDirection));
+      }
+      interpreter.runCycle();
+      cycles++;
+    },
+    updateObjects: () => objects.update(),
+    render: () => {
+      render();
+      renderDebug(debug, state, cycles);
+    },
+  });
 
   render();
   renderDebug(debug, state, cycles);
-  setInterval(tick, CYCLE_MS);
+  loop.start();
 }
 
 void main();
