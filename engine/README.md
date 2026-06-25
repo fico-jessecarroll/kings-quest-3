@@ -27,6 +27,31 @@ isolation against a fresh `VmState` for a handful of cycles and reports which
 commands/tests/logics throw or are unimplemented - the empirical "does this
 room's logic load and run" gap report this pass worked from.
 
+## Manual smoke test
+
+After `npm run build:logic` + `npm run dev`, open the served `index.html`
+and check:
+
+1. **Boot transition (room 0 -> room 45).** The page should load straight
+   into room 45 (the game's real opening room) within a second - the debug
+   panel's `room = ` line should read `45`, not `0`. This is the same
+   `new.room(45)` transition `tests/integration/conductor.test.ts` exercises
+   headlessly (see `SRC/RM0.CG`'s startup block).
+2. **Ego renders and responds to input.** A coloured box (ego's placeholder
+   sprite - see "No VIEW resources" below) should be visible and move with
+   the arrow keys; `ego.dir` in the debug panel should update accordingly.
+3. **The parser and menu both reach the room logic.** Press Enter, type
+   `look`, and press Enter again - a response message should print to the
+   on-page log. Press F10 to open the menu bar and confirm it navigates with
+   arrow keys and Enter without throwing (check the browser console for
+   uncaught errors).
+4. **No console errors.** The browser console should show no thrown
+   exceptions; occasional `unimplemented command`/`picture resource not
+   found` warnings are expected (see "Known deviations" below) but
+   `unresolved symbol`/`cannot resolve ... as a flag or var` should never
+   appear - that's the regression class both `tests/integration/all-
+   rooms.test.ts` and `tests/integration/conductor.test.ts` guard against.
+
 ## Cycle timing
 
 The game loop in `src/main.ts` ticks every 50ms - AGI's own base interpreter
